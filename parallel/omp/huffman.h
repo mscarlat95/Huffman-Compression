@@ -9,6 +9,9 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <omp.h>
+
+#define NUM_THREADS num_threads(4)
 
 int huffman_encode_file(FILE *in, FILE *out);
 int huffman_decode_file(FILE *in, FILE *out);
@@ -21,4 +24,4 @@ int huffman_decode_memory(const unsigned char *bufin,
 						  unsigned char **bufout,
 						  uint32_t *pbufoutlen);
 
-#endif
+#endif // __HUFFMAN_HUFMANN__H_

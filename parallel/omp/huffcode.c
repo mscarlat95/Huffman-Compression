@@ -43,8 +43,7 @@ usage(FILE* out)
 		  out);
 }
 
-int
-main(int argc, char** argv)
+int main(int argc, char** argv)
 {
 	char memory = 0;
 	char compress = 1;

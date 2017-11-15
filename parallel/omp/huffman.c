@@ -9,6 +9,7 @@
 #include <string.h>
 #include <assert.h>
 #include "huffman.h"
+#include <omp.h>
 
 #ifdef WIN32
 #include <winsock2.h>
@@ -190,6 +191,8 @@ static void
 free_encoder(SymbolEncoder *pSE)
 {
 	unsigned long i;
+	#pragma omp parallel for NUM_THREADS \
+	schedule(dynamic)
 	for(i = 0; i < MAX_SYMBOLS; ++i)
 	{
 		huffman_code *p = (*pSE)[i];
@@ -206,6 +209,8 @@ init_frequencies(SymbolFrequencies *pSF)
 	memset(*pSF, 0, sizeof(SymbolFrequencies));
 #if 0
 	unsigned int i;
+	#pragma omp parallel for NUM_THREADS \
+	schedule(dynamic)
 	for(i = 0; i < MAX_SYMBOLS; ++i)
 	{
 		unsigned char uc = (unsigned char)i;
