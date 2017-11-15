@@ -9,7 +9,6 @@
 #include <string.h>
 #include <assert.h>
 #include "huffman.h"
-#include <omp.h>
 
 #ifdef WIN32
 #include <winsock2.h>
@@ -391,6 +390,8 @@ static void
 print_freqs(SymbolFrequencies * pSF)
 {
 	size_t i;
+	#pragma omp parallel for NUM_THREADS \
+	schedule(dynamic)
 	for(i = 0; i < MAX_SYMBOLS; ++i)
 	{
 		if((*pSF)[i])
@@ -449,6 +450,8 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 #endif
 
 	/* Get the number of symbols. */
+	#pragma omp parallel for NUM_THREADS \
+	schedule(guided)
 	for(n = 0; n < MAX_SYMBOLS && (*pSF)[n]; ++n)
 		;
 
@@ -502,6 +505,8 @@ write_code_table(FILE* out, SymbolEncoder *se, uint32_t symbol_count)
 	uint32_t i, count = 0;
 	
 	/* Determine the number of entries in se. */
+	#pragma omp parallel for NUM_THREADS \
+	schedule(guided)
 	for(i = 0; i < MAX_SYMBOLS; ++i)
 	{
 		if((*se)[i])
@@ -551,6 +556,8 @@ write_code_table_to_memory(buf_cache *pc,
 	uint32_t i, count = 0;
 
 	/* Determine the number of entries in se. */
+	#pragma omp parallel for NUM_THREADS \
+	schedule(guided)
 	for(i = 0; i < MAX_SYMBOLS; ++i)
 	{
 		if((*se)[i])
