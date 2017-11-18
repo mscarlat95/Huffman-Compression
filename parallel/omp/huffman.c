@@ -502,6 +502,8 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 static int
 write_code_table(FILE* out, SymbolEncoder *se, uint32_t symbol_count)
 {
+	printf("SHIIIIIIIIIIIIIIIIT\n");
+
 	uint32_t i, count = 0;
 	
 	/* Determine the number of entries in se. */
@@ -524,9 +526,12 @@ write_code_table(FILE* out, SymbolEncoder *se, uint32_t symbol_count)
 		return 1;
 
 	/* Write the entries. */
-	for(i = 0; i < MAX_SYMBOLS; ++i)
+	huffman_code *p = NULL;
+	int flag = 0;
+
+	for(i = 0; i < MAX_SYMBOLS && !flag; ++i)
 	{
-		huffman_code *p = (*se)[i];
+		p = (*se)[i];
 		if(p)
 		{
 			unsigned int numbytes;
@@ -537,11 +542,11 @@ write_code_table(FILE* out, SymbolEncoder *se, uint32_t symbol_count)
 			/* Write the code bytes. */
 			numbytes = numbytes_from_numbits(p->numbits);
 			if(fwrite(p->bits, 1, numbytes, out) != numbytes)
-				return 1;
+				flag = 1;
 		}
 	}
 
-	return 0;
+	return flag;
 }
 
 /*
@@ -577,13 +582,12 @@ write_code_table_to_memory(buf_cache *pc,
 
 	/* Write the entries. */
 	int flag = 0;
-	//#pragma omp parallel for private(i)
-	for(i = 0; i < MAX_SYMBOLS; ++i)
-	{
-		if(flag)
-			continue;
+	
+	huffman_code *p = NULL;
 
-		huffman_code *p = (*se)[i];
+	for(i = 0; i < MAX_SYMBOLS && !flag; ++i)
+	{
+		p = (*se)[i];
 		if(p)
 		{
 			unsigned int numbytes;
@@ -606,9 +610,8 @@ write_code_table_to_memory(buf_cache *pc,
 			}
 		}
 	}
-	if(flag)
-		return 1;
-	return 0;
+
+	return flag;
 }
 
 /*
@@ -740,25 +743,49 @@ read_code_table_from_memory(const unsigned char* bufin,
 {
 	huffman_node *root = new_nonleaf_node(0, NULL, NULL);
 	uint32_t count;
-	
+
+	int res = 1;
+	#pragma omp parallel sections private (res)
+	{
+		#pragma omp section
+		{
+			res = memread(bufin, bufinlen, pindex, &count, sizeof(count));
+			free_huffman_tree(root);
+		}
+
+		#pragma omp section
+		count = ntohl(count);
+
+		#pragma omp section
+		{
+			res = memread(bufin, bufinlen, pindex, pDataBytes, sizeof(*pDataBytes));
+			free_huffman_tree(root);
+		}
+
+		#pragma omp section
+		*pDataBytes = ntohl(*pDataBytes);
+	}	
+
+	if (res) return NULL;
+
 	/* Read the number of entries.
 	   (it is stored in network byte order). */
-	if(memread(bufin, bufinlen, pindex, &count, sizeof(count)))
-	{
-		free_huffman_tree(root);
-		return NULL;
-	}
+	// if(memread(bufin, bufinlen, pindex, &count, sizeof(count)))
+	// {
+	// 	free_huffman_tree(root);
+	// 	return NULL;
+	// }
 
-	count = ntohl(count);
+	// count = ntohl(count);
 
 	/* Read the number of data bytes this encoding represents. */
-	if(memread(bufin, bufinlen, pindex, pDataBytes, sizeof(*pDataBytes)))
-	{
-		free_huffman_tree(root);
-		return NULL;
-	}
+	// if(memread(bufin, bufinlen, pindex, pDataBytes, sizeof(*pDataBytes)))
+	// {
+	// 	free_huffman_tree(root);
+	// 	return NULL;
+	// }
 
-	*pDataBytes = ntohl(*pDataBytes);
+	// *pDataBytes = ntohl(*pDataBytes);
 
 	/* Read the entries. */
 	while(count-- > 0)

@@ -11,7 +11,7 @@ function run() {
 # compare (test_description, file1, file2)
 function compare() {
 	echo -n -e "$1"
-	(diff "$2" "$3"  && echo "Succeeded" ) || echo "Failed" 
+	(diff "$2" "$3" && echo "Succeeded" ) || echo "Failed" 
 }
 
 path=`pwd`
