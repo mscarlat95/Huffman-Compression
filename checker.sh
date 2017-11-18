@@ -4,7 +4,8 @@
 function run() {
 	cd "$1"
 	make clean && make
-	time ./huffcode -i inputFile -o "$2" -c
+	time ./huffcode -i "$2" -o "$3" -c
+	make clean
 }
 
 # compare (test_description, file1, file2)
@@ -18,16 +19,16 @@ function main() {
 	path=`pwd`
 	
 	echo -e "---------------\tSerial\t---------------"
-	run "$path/serial" "serial_out"
+	run "$path/serial" "$path/inputFile" "serial_out"
 
 	echo -e "\n---------------\tParallel OMP\t---------------"
-	run "$path/parallel/omp" "omp_out"
+	run "$path/parallel/omp" "$path/inputFile" "omp_out"
 	
 	echo -e "\n---------------\tParallel PTHREADS\t---------------"
-	run "$path/parallel/pthreads" "pthreads_out"
+	run "$path/parallel/pthreads" "$path/inputFile" "pthreads_out"
 	
 	echo -e "\n---------------\tParallel MPI\t---------------"
-	run "$path/parallel/mpi" "mpi_out"
+	run "$path/parallel/mpi" "$path/inputFile" "mpi_out"
 
 	echo -e "\n\n---------------\tChecker\t---------------"
 	compare "1) Serial VS Parallel OMP:\t" "$path/serial/serial_out" "$path/parallel/omp/omp_out"
