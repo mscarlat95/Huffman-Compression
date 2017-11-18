@@ -461,7 +461,10 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 #endif
 
 	/* Sort the symbol frequency array by ascending frequency. */
-	qsort((*pSF), MAX_SYMBOLS, sizeof((*pSF)[0]), SFComp);
+	#pragma omp parallel
+	{
+		qsort((*pSF), MAX_SYMBOLS, sizeof((*pSF)[0]), SFComp);
+	}
 
 #if 0	
 	printf("AFTER SORT\n");
@@ -481,20 +484,31 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 	 * Note that this implementation uses a simple
 	 * count instead of probability.
 	 */
+
+	// #pragma omp parallel for private (m1, m2, pSF)
 	for(i = 0; i < n - 1; ++i)
 	{
 		/* Set m1 and m2 to the two subsets of least probability. */
-		m1 = (*pSF)[0];
-		m2 = (*pSF)[1];
+		#pragma omp task firstprivate (pSF)
+		{
+			m1 = (*pSF)[0];
+			m2 = (*pSF)[1];
 
-		/* Replace m1 and m2 with a set {m1, m2} whose probability
-		 * is the sum of that of m1 and m2. */
-		(*pSF)[0] = m1->parent = m2->parent =
-			new_nonleaf_node(m1->count + m2->count, m1, m2);
-		(*pSF)[1] = NULL;
-		
-		/* Put newSet into the correct count position in pSF. */
-		qsort((*pSF), n, sizeof((*pSF)[0]), SFComp);
+			/* Replace m1 and m2 with a set {m1, m2} whose probability
+		 	* is the sum of that of m1 and m2. */
+			(*pSF)[0] = m1->parent = m2->parent =
+				new_nonleaf_node(m1->count + m2->count, m1, m2);
+			(*pSF)[1] = NULL;
+		}
+
+		#pragma omp taskwait
+
+		#pragma omp task firstprivate (pSF)
+		{
+			/* Put newSet into the correct count position in pSF. */
+			qsort((*pSF), n, sizeof((*pSF)[0]), SFComp);		
+		}
+	
 	}
 
 	/* Build the SymbolEncoder array from the tree. */
@@ -543,9 +557,12 @@ write_code_table(FILE* out, SymbolEncoder *se, uint32_t symbol_count)
 		return 1;
 
 	/* Write the entries. */
-	for(i = 0; i < MAX_SYMBOLS; ++i)
+	huffman_code *p = NULL;
+	int flag = 0;
+
+	for(i = 0; i < MAX_SYMBOLS && !flag; ++i)
 	{
-		huffman_code *p = (*se)[i];
+		p = (*se)[i];
 		if(p)
 		{
 			unsigned int numbytes;
@@ -556,11 +573,11 @@ write_code_table(FILE* out, SymbolEncoder *se, uint32_t symbol_count)
 			/* Write the code bytes. */
 			numbytes = numbytes_from_numbits(p->numbits);
 			if(fwrite(p->bits, 1, numbytes, out) != numbytes)
-				return 1;
+				flag = 1;
 		}
 	}
 
-	return 0;
+	return flag;
 }
 
 /*
@@ -595,9 +612,13 @@ write_code_table_to_memory(buf_cache *pc,
 		return 1;
 
 	/* Write the entries. */
-	for(i = 0; i < MAX_SYMBOLS; ++i)
+	int flag = 0;
+	
+	huffman_code *p = NULL;
+
+	for(i = 0; i < MAX_SYMBOLS && !flag; ++i)
 	{
-		huffman_code *p = (*se)[i];
+		p = (*se)[i];
 		if(p)
 		{
 			unsigned int numbytes;
@@ -605,20 +626,23 @@ write_code_table_to_memory(buf_cache *pc,
 			be stored in an unsigned char. */
 			unsigned char uc = (unsigned char)i;
 			/* Write the 1 byte symbol. */
-			if(write_cache(pc, &uc, sizeof(uc)))
-				return 1;
+			if(write_cache(pc, &uc, sizeof(uc))) {
+				flag = 1;
+			}
 			/* Write the 1 byte code bit length. */
 			uc = (unsigned char)p->numbits;
-			if(write_cache(pc, &uc, sizeof(uc)))
-				return 1;
+			if(write_cache(pc, &uc, sizeof(uc))) {
+				flag = 1;
+			}
 			/* Write the code bytes. */
 			numbytes = numbytes_from_numbits(p->numbits);
-			if(write_cache(pc, p->bits, numbytes))
-				return 1;
+			if(write_cache(pc, p->bits, numbytes)) {
+				flag = 1;
+			}
 		}
 	}
 
-	return 0;
+	return flag;
 }
 
 /*
@@ -750,25 +774,33 @@ read_code_table_from_memory(const unsigned char* bufin,
 {
 	huffman_node *root = new_nonleaf_node(0, NULL, NULL);
 	uint32_t count;
-	
-	/* Read the number of entries.
+
+	int res = 1;
+	#pragma omp parallel sections private (res)
+	{
+		/* Read the number of entries.
 	   (it is stored in network byte order). */
-	if(memread(bufin, bufinlen, pindex, &count, sizeof(count)))
-	{
-		free_huffman_tree(root);
-		return NULL;
-	}
+		#pragma omp section
+		{
+			res = memread(bufin, bufinlen, pindex, &count, sizeof(count));
+			free_huffman_tree(root);
+		}
 
-	count = ntohl(count);
+		#pragma omp section
+		count = ntohl(count);
 
-	/* Read the number of data bytes this encoding represents. */
-	if(memread(bufin, bufinlen, pindex, pDataBytes, sizeof(*pDataBytes)))
-	{
-		free_huffman_tree(root);
-		return NULL;
-	}
+		/* Read the number of data bytes this encoding represents. */
+		#pragma omp section
+		{
+			res = memread(bufin, bufinlen, pindex, pDataBytes, sizeof(*pDataBytes));
+			free_huffman_tree(root);
+		}
 
-	*pDataBytes = ntohl(*pDataBytes);
+		#pragma omp section
+		*pDataBytes = ntohl(*pDataBytes);
+	}	
+	if (res) return NULL;
+
 
 	/* Read the entries. */
 	while(count-- > 0)
@@ -845,7 +877,7 @@ do_file_encode(FILE* in, FILE* out, SymbolEncoder *se)
 	unsigned char curbyte = 0;
 	unsigned char curbit = 0;
 	int c;
-
+	
 	while((c = fgetc(in)) != EOF)
 	{
 		unsigned char uc = (unsigned char)c;
@@ -889,14 +921,16 @@ do_memory_encode(buf_cache *pc,
 	unsigned char curbyte = 0;
 	unsigned char curbit = 0;
 	unsigned int i;
+	int flag = 0;
 	
-	for(i = 0; i < bufinlen; ++i)
+	//#pragma omp parallel for private(i)
+	for(i = 0; i < bufinlen && !flag; ++i)
 	{
 		unsigned char uc = bufin[i];
 		huffman_code *code = (*se)[uc];
 		unsigned long i;
-		
-		for(i = 0; i < code->numbits; ++i)
+	
+		for(i = 0; i < code->numbits && !flag; ++i)
 		{
 			/* Add the current bit to curbyte. */
 			curbyte |= get_bit(code->bits, i) << curbit;
@@ -904,14 +938,18 @@ do_memory_encode(buf_cache *pc,
 			/* If this byte is filled up then write it
 			 * out and reset the curbit and curbyte. */
 			if(++curbit == 8)
-			{	
-				if(write_cache(pc, &curbyte, sizeof(curbyte)))
-					return 1;
+			{
+				if(write_cache(pc, &curbyte, sizeof(curbyte))) {
+					flag = 1;
+				}
 				curbyte = 0;
 				curbit = 0;
 			}
 		}
 	}
+
+	if(flag)
+		return 1;
 
 	/*
 	 * If there is data in curbyte that has not been
