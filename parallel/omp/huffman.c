@@ -346,6 +346,8 @@ get_symbol_frequencies_from_memory(SymbolFrequencies *pSF,
 	init_frequencies(pSF);
 	
 	/* Count the frequency of each symbol in the input file. */
+	#pragma omp parallel for NUM_THREADS \
+	schedule(dynamic)
 	for(i = 0; i < bufinlen; ++i)
 	{
 		unsigned char uc = bufin[i];
