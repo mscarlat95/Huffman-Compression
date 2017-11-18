@@ -341,38 +341,22 @@ get_symbol_frequencies_from_memory(SymbolFrequencies *pSF,
 {
 	unsigned int i;
 	unsigned int total_count = 0;
-	
-	int letters = 126;
-	int pos;
-	omp_lock_t lck[letters];
-
-	#pragma omp parallel for
-	for (i = 0; i < letters; ++i) {
-		omp_init_lock (&lck[i]);
-	}
 
 	/* Set all frequencies to 0. */
 	init_frequencies(pSF);
 	
 	/* Count the frequency of each symbol in the input file. */
-	#pragma omp parallel for num_threads(16)
+	//#pragma omp parallel for num_threads(16)
 	for(i = 0; i < bufinlen; ++i)
 	{
 		unsigned char uc = bufin[i];
 
-		omp_set_lock (&lck[uc]);
 		if(!(*pSF)[uc])
 			(*pSF)[uc] = new_leaf_node(uc);
 		
 		++(*pSF)[uc]->count;
-		omp_unset_lock (&lck[uc]);
 		//++total_count;
 	}	
-
-	#pragma omp parallel for
-	for (i = 0; i < letters; ++i) {
-		omp_destroy_lock (&lck[i]);
-	}
 
 	return bufinlen;
 }
