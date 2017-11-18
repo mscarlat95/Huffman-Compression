@@ -576,13 +576,8 @@ write_code_table_to_memory(buf_cache *pc,
 		return 1;
 
 	/* Write the entries. */
-	int flag = 0;
-	//#pragma omp parallel for private(i)
 	for(i = 0; i < MAX_SYMBOLS; ++i)
 	{
-		if(flag)
-			continue;
-
 		huffman_code *p = (*se)[i];
 		if(p)
 		{
@@ -591,23 +586,19 @@ write_code_table_to_memory(buf_cache *pc,
 			be stored in an unsigned char. */
 			unsigned char uc = (unsigned char)i;
 			/* Write the 1 byte symbol. */
-			if(write_cache(pc, &uc, sizeof(uc))) {
-				flag = 1;
-			}
+			if(write_cache(pc, &uc, sizeof(uc)))
+				return 1;
 			/* Write the 1 byte code bit length. */
 			uc = (unsigned char)p->numbits;
-			if(write_cache(pc, &uc, sizeof(uc))) {
-				flag = 1;
-			}
+			if(write_cache(pc, &uc, sizeof(uc)))
+				return 1;
 			/* Write the code bytes. */
 			numbytes = numbytes_from_numbits(p->numbits);
-			if(write_cache(pc, p->bits, numbytes)) {
-				flag = 1;
-			}
+			if(write_cache(pc, p->bits, numbytes))
+				return 1;
 		}
 	}
-	if(flag)
-		return 1;
+
 	return 0;
 }
 
@@ -879,42 +870,29 @@ do_memory_encode(buf_cache *pc,
 	unsigned char curbyte = 0;
 	unsigned char curbit = 0;
 	unsigned int i;
-	int flag = 0;
 	
-	//#pragma omp parallel for private(i)
 	for(i = 0; i < bufinlen; ++i)
 	{
-		if(flag)
-			break;
-
 		unsigned char uc = bufin[i];
 		huffman_code *code = (*se)[uc];
 		unsigned long i;
 		
-			for(i = 0; i < code->numbits; ++i)
+		for(i = 0; i < code->numbits; ++i)
+		{
+			/* Add the current bit to curbyte. */
+			curbyte |= get_bit(code->bits, i) << curbit;
+
+			/* If this byte is filled up then write it
+			 * out and reset the curbit and curbyte. */
+			if(++curbit == 8)
 			{
-				if(flag)
-					continue;
-				
-				/* Add the current bit to curbyte. */
-				curbyte |= get_bit(code->bits, i) << curbit;
-
-				/* If this byte is filled up then write it
-				 * out and reset the curbit and curbyte. */
-					if(++curbit == 8)
-					{
-						if(write_cache(pc, &curbyte, sizeof(curbyte))) {
-							flag = 1;
-							continue;
-						}
-						curbyte = 0;
-						curbit = 0;
-					}
+				if(write_cache(pc, &curbyte, sizeof(curbyte)))
+					return 1;
+				curbyte = 0;
+				curbit = 0;
 			}
+		}
 	}
-
-	if(flag)
-		return 1;
 
 	/*
 	 * If there is data in curbyte that has not been
@@ -1015,11 +993,7 @@ int huffman_encode_memory(const unsigned char *bufin,
 		return 1;
 
 	/* Get the frequency of each symbol in the input memory. */
-	#pragma omp parallel sections
-	{
-		#pragma omp section
-		symbol_count = get_symbol_frequencies_from_memory(&sf, bufin, bufinlen);
-	}
+	symbol_count = get_symbol_frequencies_from_memory(&sf, bufin, bufinlen);
 
 	/* Build an optimal table from the symbolCount. */
 	se = calculate_huffman_codes(&sf);

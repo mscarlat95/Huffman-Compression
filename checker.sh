@@ -4,7 +4,7 @@
 function run() {
 	cd "$1"
 	make clean && make
-	time ./huffcode -i "$2" -o "$3" -c
+	time ./huffcode -i "$2" -o "$3" -c -m
 	make clean
 }
 
