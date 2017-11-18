@@ -51,7 +51,15 @@ function main() {
 }
 
 if [ $# -eq 1 ]; then
-	"$1" 
+	"$1"
+	if [ "$1" == "omp" ] ; then
+		compare "1) Serial VS Parallel OMP:\t" "$path/serial/serial_out" "$path/parallel/omp/omp_out"
+	elif [ "$1" == "pthreads" ] ; then
+		compare "2) Serial VS Parallel PTHREADS:\t" "$path/serial/serial_out" "$path/parallel/pthreads/pthreads_out"
+	elif [ "$1" == "mpi" ] ; then
+		compare "3) Serial VS Parallel MPI:\t" "$path/serial/serial_out" "$path/parallel/mpi/mpi_out"
+	fi
+
 elif [ $# -eq 0 ]; then
 	main
 else
