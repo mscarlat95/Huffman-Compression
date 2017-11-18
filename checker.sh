@@ -5,6 +5,7 @@ function run() {
 	cd "$1"
 	make clean && make
 	time ./huffcode -i "$2" -o "$3" -c
+	make clean
 }
 
 # compare (test_description, file1, file2)
