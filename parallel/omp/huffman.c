@@ -797,6 +797,7 @@ read_code_table_from_memory(const unsigned char* bufin,
 		 * zero and one child nodes in the tree. New nodes
 		 * are added as needed in the tree.
 		 */
+		#pragma omp parallel for private (p)
 		for(curbit = 0; curbit < numbits; ++curbit)
 		{
 			if(get_bit(bytes, curbit))
