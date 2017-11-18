@@ -1,6 +1,6 @@
 #!/bin/bash
 
-inputFile="README_L"
+inputFile="inputFile"
 outputFile="out"
 
 module load compilers/solarisstudio-12.5
