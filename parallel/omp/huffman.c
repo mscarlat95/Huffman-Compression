@@ -440,9 +440,11 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 	printf("BEFORE SORT\n");
 	print_freqs(pSF);
 #endif
-
 	/* Sort the symbol frequency array by ascending frequency. */
-	qsort((*pSF), MAX_SYMBOLS, sizeof((*pSF)[0]), SFComp);
+	#pragma omp parallel
+	{
+		qsort((*pSF), MAX_SYMBOLS, sizeof((*pSF)[0]), SFComp);
+	}
 
 #if 0	
 	printf("AFTER SORT\n");
@@ -462,20 +464,32 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 	 * Note that this implementation uses a simple
 	 * count instead of probability.
 	 */
+
+	// #pragma omp parallel for private (m1, m2, pSF)
 	for(i = 0; i < n - 1; ++i)
 	{
-		/* Set m1 and m2 to the two subsets of least probability. */
-		m1 = (*pSF)[0];
-		m2 = (*pSF)[1];
 
-		/* Replace m1 and m2 with a set {m1, m2} whose probability
-		 * is the sum of that of m1 and m2. */
-		(*pSF)[0] = m1->parent = m2->parent =
-			new_nonleaf_node(m1->count + m2->count, m1, m2);
-		(*pSF)[1] = NULL;
+
+		/* Set m1 and m2 to the two subsets of least probability. */
 		
-		/* Put newSet into the correct count position in pSF. */
-		qsort((*pSF), n, sizeof((*pSF)[0]), SFComp);
+		#pragma omp task firstprivate (pSF)
+		{
+			m1 = (*pSF)[0];
+			m2 = (*pSF)[1];
+
+			/* Replace m1 and m2 with a set {m1, m2} whose probability
+		 	* is the sum of that of m1 and m2. */
+			(*pSF)[0] = m1->parent = m2->parent =
+				new_nonleaf_node(m1->count + m2->count, m1, m2);
+			(*pSF)[1] = NULL;
+		}
+
+		#pragma omp task firstprivate (pSF)
+		{
+			/* Put newSet into the correct count position in pSF. */
+			qsort((*pSF), n, sizeof((*pSF)[0]), SFComp);		
+		}
+	
 	}
 
 	/* Build the SymbolEncoder array from the tree. */
