@@ -190,8 +190,8 @@ static void
 free_encoder(SymbolEncoder *pSE)
 {
 	unsigned long i;
-	/*#pragma omp parallel for NUM_THREADS \
-	schedule(dynamic) */
+	#pragma omp parallel for NUM_THREADS \
+	schedule(dynamic)
 	for(i = 0; i < MAX_SYMBOLS; ++i)
 	{
 		huffman_code *p = (*pSE)[i];
@@ -505,8 +505,8 @@ write_code_table(FILE* out, SymbolEncoder *se, uint32_t symbol_count)
 	uint32_t i, count = 0;
 	
 	/* Determine the number of entries in se. */
-	#pragma omp parallel for NUM_THREADS \
-	schedule(guided)
+	/*#pragma omp parallel for NUM_THREADS \
+	schedule(guided)*/
 	for(i = 0; i < MAX_SYMBOLS; ++i)
 	{
 		if((*se)[i])
