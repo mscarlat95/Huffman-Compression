@@ -57,7 +57,7 @@ numbytes_from_numbits(unsigned long numbits)
  * get_bit returns the ith bit in the bits array
  * in the 0th position of the return value.
  */
-static unsigned char
+static inline unsigned char
 get_bit(unsigned char* bits, unsigned long i)
 {
 	return (bits[i / 8] >> i % 8) & 1;
