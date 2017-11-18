@@ -342,22 +342,39 @@ get_symbol_frequencies_from_memory(SymbolFrequencies *pSF,
 	unsigned int i;
 	unsigned int total_count = 0;
 	
+	int letters = 126;
+	int pos;
+	omp_lock_t lck[letters];
+
+	#pragma omp parallel for
+	for (i = 0; i < letters; ++i) {
+		omp_init_lock (&lck[i]);
+	}
+
 	/* Set all frequencies to 0. */
 	init_frequencies(pSF);
 	
 	/* Count the frequency of each symbol in the input file. */
-	#pragma omp parallel for NUM_THREADS \
-	schedule(dynamic)
+	#pragma omp parallel for num_threads(16)
 	for(i = 0; i < bufinlen; ++i)
 	{
 		unsigned char uc = bufin[i];
+
+		omp_set_lock (&lck[uc]);
 		if(!(*pSF)[uc])
 			(*pSF)[uc] = new_leaf_node(uc);
+		
 		++(*pSF)[uc]->count;
-		++total_count;
+		omp_unset_lock (&lck[uc]);
+		//++total_count;
+	}	
+
+	#pragma omp parallel for
+	for (i = 0; i < letters; ++i) {
+		omp_destroy_lock (&lck[i]);
 	}
 
-	return total_count;
+	return bufinlen;
 }
 
 /*
@@ -392,8 +409,8 @@ static void
 print_freqs(SymbolFrequencies * pSF)
 {
 	size_t i;
-	#pragma omp parallel for NUM_THREADS \
-	schedule(dynamic)
+	//#pragma omp parallel for NUM_THREADS \
+	//schedule(dynamic)
 	for(i = 0; i < MAX_SYMBOLS; ++i)
 	{
 		if((*pSF)[i])
@@ -828,7 +845,7 @@ do_file_encode(FILE* in, FILE* out, SymbolEncoder *se)
 	unsigned char curbyte = 0;
 	unsigned char curbit = 0;
 	int c;
-	
+
 	while((c = fgetc(in)) != EOF)
 	{
 		unsigned char uc = (unsigned char)c;
@@ -887,7 +904,7 @@ do_memory_encode(buf_cache *pc,
 			/* If this byte is filled up then write it
 			 * out and reset the curbit and curbyte. */
 			if(++curbit == 8)
-			{
+			{	
 				if(write_cache(pc, &curbyte, sizeof(curbyte)))
 					return 1;
 				curbyte = 0;
@@ -973,7 +990,7 @@ huffman_decode_file(FILE *in, FILE *out)
 	return 0;
 }
 
-#define CACHE_SIZE 1024
+#define CACHE_SIZE 10240
 
 int huffman_encode_memory(const unsigned char *bufin,
 						  unsigned int bufinlen,
