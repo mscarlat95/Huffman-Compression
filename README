@@ -1,6 +1,6 @@
 Huffman Compression applied over distributed/parallel machines
 
-Initial Author: https://github.com/drichardson/huffman
+Initial Author Repository: https://github.com/drichardson/huffman
 
 Used technologies:
 - OpenMP 
