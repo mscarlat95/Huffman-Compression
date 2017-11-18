@@ -913,15 +913,16 @@ do_memory_encode(buf_cache *pc,
 
 				/* If this byte is filled up then write it
 				 * out and reset the curbit and curbyte. */
-					if(++curbit == 8)
-					{
+				if(++curbit == 8)
+				{
+					if(!flag) {
 						if(write_cache(pc, &curbyte, sizeof(curbyte))) {
 							flag = 1;
-							continue;
 						}
 						curbyte = 0;
 						curbit = 0;
 					}
+				}
 			}
 	}
 
@@ -1027,12 +1028,8 @@ int huffman_encode_memory(const unsigned char *bufin,
 		return 1;
 
 	/* Get the frequency of each symbol in the input memory. */
-	#pragma omp parallel sections
-	{
-		#pragma omp section
-		symbol_count = get_symbol_frequencies_from_memory(&sf, bufin, bufinlen);
-	}
-
+	symbol_count = get_symbol_frequencies_from_memory(&sf, bufin, bufinlen);
+	
 	/* Build an optimal table from the symbolCount. */
 	se = calculate_huffman_codes(&sf);
 	root = sf[0];
