@@ -747,7 +747,6 @@ read_code_table_from_memory(const unsigned char* bufin,
 	int res = 1;
 	#pragma omp parallel sections private (res)
 	{
-
 		/* Read the number of entries.
 	   (it is stored in network byte order). */
 		#pragma omp section
