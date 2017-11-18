@@ -468,10 +468,7 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 	// #pragma omp parallel for private (m1, m2, pSF)
 	for(i = 0; i < n - 1; ++i)
 	{
-
-
 		/* Set m1 and m2 to the two subsets of least probability. */
-		
 		#pragma omp task firstprivate (pSF)
 		{
 			m1 = (*pSF)[0];
@@ -483,6 +480,8 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 				new_nonleaf_node(m1->count + m2->count, m1, m2);
 			(*pSF)[1] = NULL;
 		}
+
+		#pragma omp taskwait
 
 		#pragma omp task firstprivate (pSF)
 		{
@@ -908,36 +907,28 @@ do_memory_encode(buf_cache *pc,
 	int flag = 0;
 	
 	//#pragma omp parallel for private(i)
-	for(i = 0; i < bufinlen; ++i)
+	for(i = 0; i < bufinlen && !flag; ++i)
 	{
-		if(flag)
-			break;
-
 		unsigned char uc = bufin[i];
 		huffman_code *code = (*se)[uc];
 		unsigned long i;
-		
-			for(i = 0; i < code->numbits; ++i)
-			{
-				if(flag)
-					continue;
-				
-				/* Add the current bit to curbyte. */
-				curbyte |= get_bit(code->bits, i) << curbit;
+	
+		for(i = 0; i < code->numbits && !flag; ++i)
+		{
+			/* Add the current bit to curbyte. */
+			curbyte |= get_bit(code->bits, i) << curbit;
 
-				/* If this byte is filled up then write it
-				 * out and reset the curbit and curbyte. */
-				if(++curbit == 8)
-				{
-					if(!flag) {
-						if(write_cache(pc, &curbyte, sizeof(curbyte))) {
-							flag = 1;
-						}
-						curbyte = 0;
-						curbit = 0;
-					}
+			/* If this byte is filled up then write it
+			 * out and reset the curbit and curbyte. */
+			if(++curbit == 8)
+			{
+				if(write_cache(pc, &curbyte, sizeof(curbyte))) {
+					flag = 1;
 				}
+				curbyte = 0;
+				curbit = 0;
 			}
+		}
 	}
 
 	if(flag)
