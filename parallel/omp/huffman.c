@@ -747,6 +747,9 @@ read_code_table_from_memory(const unsigned char* bufin,
 	int res = 1;
 	#pragma omp parallel sections private (res)
 	{
+
+		/* Read the number of entries.
+	   (it is stored in network byte order). */
 		#pragma omp section
 		{
 			res = memread(bufin, bufinlen, pindex, &count, sizeof(count));
@@ -756,6 +759,7 @@ read_code_table_from_memory(const unsigned char* bufin,
 		#pragma omp section
 		count = ntohl(count);
 
+		/* Read the number of data bytes this encoding represents. */
 		#pragma omp section
 		{
 			res = memread(bufin, bufinlen, pindex, pDataBytes, sizeof(*pDataBytes));
@@ -765,27 +769,8 @@ read_code_table_from_memory(const unsigned char* bufin,
 		#pragma omp section
 		*pDataBytes = ntohl(*pDataBytes);
 	}	
-
 	if (res) return NULL;
 
-	/* Read the number of entries.
-	   (it is stored in network byte order). */
-	// if(memread(bufin, bufinlen, pindex, &count, sizeof(count)))
-	// {
-	// 	free_huffman_tree(root);
-	// 	return NULL;
-	// }
-
-	// count = ntohl(count);
-
-	/* Read the number of data bytes this encoding represents. */
-	// if(memread(bufin, bufinlen, pindex, pDataBytes, sizeof(*pDataBytes)))
-	// {
-	// 	free_huffman_tree(root);
-	// 	return NULL;
-	// }
-
-	// *pDataBytes = ntohl(*pDataBytes);
 
 	/* Read the entries. */
 	while(count-- > 0)
