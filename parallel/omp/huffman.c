@@ -693,13 +693,16 @@ int huffman_decode_memory(const unsigned char *bufin,
 	unsigned int bufcur = 0;
 
 	/* Ensure the arguments are valid. */
-	if(!pbufout || !pbufoutlen)
+	if(!pbufout || !pbufoutlen) {
 		return 1;
+	}
 
 	/* Read the Huffman code table. */
 	root = read_code_table_from_memory(bufin, bufinlen, &i, &data_count);
-	if(!root)
+	if(!root) {
+		printf("mor\n");
 		return 1;
+	}
 
 	buf = (unsigned char*)malloc(data_count);
 
