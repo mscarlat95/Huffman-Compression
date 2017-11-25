@@ -10,7 +10,11 @@ LDFLAGS+=-arch ${ARCH}
 CFLAGS+=-arch ${ARCH}
 endif
 
-all: huffcode libhuffman.a
+#all: huffcode libhuffman.a
+all: omp
+
+omp:
+	gcc huffman.c huffcode.c $(CFLAGS) -o huffcode -fopenmp
 
 huffcode: huffcode.o libhuffman.a
 	$(CC) $(LDFLAGS) -o $@ huffcode.o libhuffman.a

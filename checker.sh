@@ -4,7 +4,7 @@
 function run() {
 	cd "$1"
 	make clean && make
-	time ./huffcode -i "$2" -o "$3" -c -m
+	time ./huffcode -i "$2" -o "$3" -c
 	make clean
 }
 
@@ -12,6 +12,8 @@ function run() {
 function compare() {
 	echo -n -e "$1"
 	(diff "$2" "$3" && echo "Succeeded" ) || echo "Failed" 
+
+	rm "$3"
 }
 
 path=`pwd`

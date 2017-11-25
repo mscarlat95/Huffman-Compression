@@ -43,9 +43,10 @@ usage(FILE* out)
 		  out);
 }
 
-int main(int argc, char** argv)
+int
+main(int argc, char** argv)
 {
-	char memory = 0;
+	char memory = 1;
 	char compress = 1;
 	int opt;
 	const char *file_in = NULL, *file_out = NULL;
@@ -75,9 +76,6 @@ int main(int argc, char** argv)
 		case 'v':
 			version(stdout);
 			return 0;
-		case 'm':
-			memory = 1;
-			break;
 		default:
 			usage(stderr);
 			return 1;
@@ -115,9 +113,6 @@ int main(int argc, char** argv)
 		return compress ?
 			memory_encode_file(in, out) : memory_decode_file(in, out);
 	}
-
-	return compress ?
-		huffman_encode_file(in, out) : huffman_decode_file(in, out);
 }
 
 static int

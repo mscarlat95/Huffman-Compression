@@ -3,7 +3,7 @@
 # or
 # make ARCH=x86_64
 
-CFLAGS=-g -Wall -Werror -fopenmp
+CFLAGS=-g -Wall -Werror
 
 ifdef ARCH
 LDFLAGS+=-arch ${ARCH}
@@ -14,7 +14,7 @@ endif
 all: omp
 
 omp:
-	gcc huffman.c huffcode.c -o huffcode -fopenmp
+	gcc huffman.c huffcode.c $(CFLAGS) -o huffcode -fopenmp
 
 huffcode: huffcode.o libhuffman.a
 	$(CC) $(LDFLAGS) -o $@ huffcode.o libhuffman.a
