@@ -306,7 +306,6 @@ get_symbol_frequencies_from_memory(SymbolFrequencies *pSF,
 								   unsigned int bufinlen)
 {
 	unsigned int i;
-	unsigned int total_count = 0;
 	
 	/* Set all frequencies to 0. */
 	init_frequencies(pSF);
@@ -318,10 +317,9 @@ get_symbol_frequencies_from_memory(SymbolFrequencies *pSF,
 		if(!(*pSF)[uc])
 			(*pSF)[uc] = new_leaf_node(uc);
 		++(*pSF)[uc]->count;
-		++total_count;
 	}
 
-	return total_count;
+	return bufinlen;
 }
 
 /*

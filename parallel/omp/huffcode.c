@@ -19,7 +19,7 @@ extern char* optarg;
 #include <unistd.h>
 #endif
 
-static unsigned int memory_encode_file(FILE *in, FILE *out,
+static unsigned int memory_encode_read_file(FILE *in,
 									   unsigned char **buf, unsigned long sz);
 static unsigned int memory_decode_file(FILE *in, FILE *out,
 									   unsigned char **buf, unsigned long sz);
@@ -123,10 +123,16 @@ main(int argc, char** argv)
 		}
 	}
 
+	/**
+	 * Get file size
+	 */
 	fseek(fp[0], 0L, SEEK_END);
 	unsigned long sz = (unsigned long)ftell(fp[0]);
 	fseek(fp[0], 0L, SEEK_SET);
 
+	/**
+	 * Increment each file pointer to its specific chunk size
+	 */
 	#pragma omp parallel for schedule(dynamic) \
 	num_threads(4)
 	for(i = 0; i < 4; ++i)
@@ -139,20 +145,25 @@ main(int argc, char** argv)
 		if (compress) {
 			printf("----- COMPRESS -----\n");
 
-			//#pragma omp parallel for
+			/**
+			 * Read file from disk in parallel
+			 */
 			#pragma omp parallel for schedule(dynamic) \
 			num_threads(4)
 			for(i = 0; i < 4; ++i) {
-				cur[i] = memory_encode_file(fp[i], out, &buf[i], (unsigned long) (sz / 4));
+				cur[i] = memory_encode_read_file(fp[i], &buf[i], (unsigned long) (sz / 4));
 			}
 
 			// Allocate the new full buffer
-			int newSize;
+			int newSize = 0;
 			for(i = 0; i < 4; ++i) {
 				newSize += strlen(buf[i]);
 			}
-			++newSize;
 
+			/**
+			 * Copy the contents of all 
+			 * partial buffers into one
+			 */
 			char *scarlat = malloc(newSize);
 
 			strcpy(scarlat, buf[0]);
@@ -166,17 +177,10 @@ main(int argc, char** argv)
 				buf[i] = NULL;
 			}
 
-			//fprintf(out, "%s", scarlat);
-
-			/* Encode the memory. */
-			for(i = 1; i < 4; i++) {
-				cur[0] += cur[i];
-			}
-			printf("%d %ld\n", cur[0], (unsigned long)(sz));
-
-			fflush(stdout);
-
-			if(huffman_encode_memory(scarlat, cur[0], &bufout, &bufoutlen))
+			/**
+			 * Do actual huffman algorithm
+			 */
+			if(huffman_encode_memory(scarlat, newSize, &bufout, &bufoutlen))
 			{
 				free(scarlat);
 				return 1;
@@ -250,12 +254,12 @@ main(int argc, char** argv)
 }
 
 static unsigned int
-memory_encode_file(FILE *in, FILE *out,
+memory_encode_read_file(FILE *in,
 				   unsigned char **buf, unsigned long sz)
 {
 	unsigned int i, len = 0, cur = 0, inc = 1024;
 
-	assert(in && out);
+	assert(in);
 
 	/* Read the file into memory. */
 	for(i = 0; i < (unsigned int)sz; i += inc)

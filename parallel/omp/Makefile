@@ -25,4 +25,7 @@ libhuffman.a: huffman.o
 	$(AR) r $@ $<
 
 clean:
-	$(RM) *.o *~ core huffcode huffcode.exe libhuffman.a
+	$(RM) *.o *~ core huffcode huffcode.exe libhuffman.a compressed
+
+run:
+	./huffcode -i ../../inputFile -o compressed
