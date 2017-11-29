@@ -20,6 +20,8 @@ extern char* optarg;
 #include <unistd.h>
 #endif
 
+#define THREADS 4
+
 static unsigned int memory_encode_read_file(FILE *in,
 									   unsigned char **buf, unsigned long sz);
 static unsigned int memory_decode_file(FILE *in, FILE *out,
@@ -49,11 +51,11 @@ usage(FILE* out)
 int
 main(int argc, char** argv)
 {
-	unsigned char *buf[4] = {NULL, NULL, NULL, NULL};
+	unsigned char *buf[THREADS] = {NULL, NULL, NULL, NULL};
 	char memory = 1;
 	char compress = 1;
 	int opt;
-	unsigned int i, cur[4];
+	unsigned int i, cur[THREADS];
 	const char *file_in = NULL, *file_out = NULL;
 	
 	unsigned char* bufout = NULL;
@@ -90,7 +92,7 @@ main(int argc, char** argv)
 		}
 	}
 
-	FILE *fp[4];
+	FILE *fp[THREADS];
 
 	/* If an input file is given then open it
 	 * on several positions
@@ -98,8 +100,8 @@ main(int argc, char** argv)
 	if(file_in)
 	{
 		#pragma omp parallel for schedule(dynamic) \
-		num_threads(4)
-		for (i = 0; i < 4; ++i) {
+		num_threads(THREADS)
+		for (i = 0; i < THREADS; ++i) {
 			fp[i] = fopen(file_in, "rb");
 			if(!fp[i])
 			{
@@ -135,10 +137,10 @@ main(int argc, char** argv)
 	 * Increment each file pointer to its specific chunk size
 	 */
 	#pragma omp parallel for schedule(dynamic) \
-	num_threads(4)
-	for(i = 0; i < 4; ++i)
+	num_threads(THREADS)
+	for(i = 0; i < THREADS; ++i)
 	{
-		fseek(fp[i], i * (unsigned long) (sz / 4), SEEK_SET);			
+		fseek(fp[i], i * (unsigned long) (sz / THREADS), SEEK_SET);			
 	}
 
 	if(memory)
@@ -150,14 +152,14 @@ main(int argc, char** argv)
 			 * Read file from disk in parallel
 			 */
 			#pragma omp parallel for schedule(dynamic) \
-			num_threads(4)
-			for(i = 0; i < 4; ++i) {
-				cur[i] = memory_encode_read_file(fp[i], &buf[i], (unsigned long) (sz / 4));
+			num_threads(THREADS)
+			for(i = 0; i < THREADS; ++i) {
+				cur[i] = memory_encode_read_file(fp[i], &buf[i], (unsigned long) (sz / THREADS));
 			}
 
 			// Allocate the new full buffer
 			int newSize = 0;
-			for(i = 0; i < 4; ++i) {
+			for(i = 0; i < THREADS; ++i) {
 				newSize += strlen(buf[i]);
 			}
 
@@ -169,11 +171,11 @@ main(int argc, char** argv)
 
 			strcpy(scarlat, buf[0]);
 			
-			for (i = 1; i < 4; i++) {
+			for (i = 1; i < THREADS; ++i) {
 				strcat(scarlat, buf[i]);
 			}
 
-			for (i = 0; i < 4; i++) {
+			for (i = 0; i < THREADS; ++i) {
 				free(buf[i]);
 				buf[i] = NULL;
 			}

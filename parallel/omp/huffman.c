@@ -645,9 +645,13 @@ int huffman_encode_memory(const unsigned char *bufin,
 	SymbolFrequencies sf;
 	SymbolEncoder *se;
 	huffman_node *root = NULL;
-	int rc;
+	int rc, i;
 	unsigned int symbol_count;
 	buf_cache cache;
+
+	buf_cache cache_tid[4];
+	unsigned char* _bufout[4];
+	unsigned int _bufoutlen[4];
 
 	/* Ensure the arguments are valid. */
 	if(!pbufout || !pbufoutlen)
@@ -655,6 +659,16 @@ int huffman_encode_memory(const unsigned char *bufin,
 
 	if(init_cache(&cache, CACHE_SIZE, pbufout, pbufoutlen))
 		return 1;
+
+	/**
+	 * Init cache for every thread
+	 */
+	for (i = 0; i < 4; ++i) {
+		_bufout[i] = NULL;
+		_bufoutlen[i] = 0;
+		if (init_cache(&cache_tid[i], CACHE_SIZE, &_bufout[i], &_bufoutlen[i]))
+			return 1;
+	}
 
 	/* Get the frequency of each symbol in the input memory. */
 	symbol_count = get_symbol_frequencies_from_memory(&sf, bufin, bufinlen);
@@ -666,11 +680,26 @@ int huffman_encode_memory(const unsigned char *bufin,
 	/* Scan the memory again and, using the table
 	   previously built, encode it into the output memory. */
 	rc = write_code_table_to_memory(&cache, se, symbol_count);
-	if(rc == 0)
-		rc = do_memory_encode(&cache, bufin, bufinlen, se);
+	flush_cache(&cache);
+	if(rc == 0) {
+		for (i = 0; i < 4; ++i) {
+			do_memory_encode(&cache_tid[i], bufin + i * bufinlen / 4, bufinlen / 4, se);
+			flush_cache(&cache_tid[i]);
+		}
+		//rc = do_memory_encode(&cache, bufin, bufinlen, se);
+	}
+
+	unsigned char *tmp = realloc(*pbufout, _bufoutlen[0] + _bufoutlen[1] + _bufoutlen[2] + _bufoutlen[3] + *pbufoutlen);
+
+	for (i = 0; i < 4; ++i) {
+		memcpy(tmp + *pbufoutlen, _bufout[i], _bufoutlen[i]);
+		*pbufoutlen += _bufoutlen[i];
+	}
+
+	*pbufout = tmp;
 
 	/* Flush the cache. */
-	flush_cache(&cache);
+	//flush_cache(&cache);
 	
 	/* Free the Huffman tree. */
 	free_huffman_tree(root);
