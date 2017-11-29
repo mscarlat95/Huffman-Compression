@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <omp.h>
 
 #ifdef WIN32
 #include <malloc.h>
@@ -179,6 +180,8 @@ main(int argc, char** argv)
 
 			/**
 			 * Do actual huffman algorithm
+			 * TODO - add 1 thread to write to memory the table
+			 *		- add 4 threads to write to memory their segments of content
 			 */
 			if(huffman_encode_memory(scarlat, newSize, &bufout, &bufoutlen))
 			{
