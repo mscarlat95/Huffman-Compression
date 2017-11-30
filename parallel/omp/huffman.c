@@ -663,12 +663,13 @@ int huffman_encode_memory(const unsigned char *bufin,
 	/**
 	 * Init cache for every thread
 	 */
+	#pragma omp parallel for num_threads(4)
 	for (i = 0; i < 4; ++i) {
 		_bufout[i] = NULL;
 		_bufoutlen[i] = 0;
-		if (init_cache(&cache_tid[i], CACHE_SIZE, &_bufout[i], &_bufoutlen[i]))
-			return 1;
+		init_cache(&cache_tid[i], CACHE_SIZE, &_bufout[i], &_bufoutlen[i]);
 	}
+		
 
 	/* Get the frequency of each symbol in the input memory. */
 	symbol_count = get_symbol_frequencies_from_memory(&sf, bufin, bufinlen);
@@ -682,6 +683,7 @@ int huffman_encode_memory(const unsigned char *bufin,
 	rc = write_code_table_to_memory(&cache, se, symbol_count);
 	flush_cache(&cache);
 	if(rc == 0) {
+		#pragma omp parallel for num_threads(4)
 		for (i = 0; i < 4; ++i) {
 			do_memory_encode(&cache_tid[i], bufin + i * bufinlen / 4, bufinlen / 4, se);
 			flush_cache(&cache_tid[i]);
