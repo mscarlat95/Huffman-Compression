@@ -127,7 +127,7 @@ main(int argc, char** argv)
 	unsigned long sz = (unsigned long)ftell(fp[0]);
 	fseek(fp[0], 0L, SEEK_SET);
 
-	#pragma omp parallel for schedule(dynamic) \
+	//#pragma omp parallel for schedule(dynamic) \
 	num_threads(4)
 	for(i = 0; i < 4; ++i)
 	{
@@ -147,7 +147,7 @@ main(int argc, char** argv)
 			}
 
 			// Allocate the new full buffer
-			int newSize;
+			int newSize = 0;
 			for(i = 0; i < 4; ++i) {
 				newSize += strlen(buf[i]);
 			}
@@ -194,55 +194,52 @@ main(int argc, char** argv)
 			free(bufout);
 		}
 		else {
+			int a, pos = 0;
+
 			printf("----- DECOMPRESS -----\n");
-			//#pragma omp parallel for schedule(dynamic) \
+			#pragma omp parallel for schedule(dynamic) \
 			num_threads(4)
 			for(i = 0; i < 4; ++i) {
 				cur[i] = memory_decode_file(fp[i], out, &buf[i], (unsigned long) (sz / 4));
 			}
 
 			/* Encode the memory. */
-			for(i = 1; i < 4; i++) {
-				cur[0] += cur[i];
+			unsigned int sum = 0;
+			for(i = 0; i < 4; i++) {
+				sum += cur[i];
 			}
 
-			// char *scarlat = malloc(cur[0]);
-			// strcpy(scarlat, buf[0]);
-			// for (i = 1; i < 4; i++) {
-			// 	strcat(scarlat, buf[i]);
-			// }
-			// fprintf(out, "%s", scarlat);
+			char *scarlat = malloc(2 * sum);
 
 			for (i = 0; i < 4; ++i) {
-				fprintf(out, "%s", buf[i]);
+				for(a = 0; a < i; ++a) {
+					pos += cur[a];
+				}
+				memcpy(scarlat + pos, buf[i], cur[i]);
 			}
 
-			// for (i = 0; i < 4; i++) {
-			// 	free(buf[i]);
-			// 	buf[i] = NULL;
-			// }
+			for (i = 0; i < 4; i++) {
+				free(buf[i]);
+				buf[i] = NULL;
+			}
 
-			// fflush(stdout);
+			/* Decode the memory. */
+			if(huffman_decode_memory(scarlat, cur[0], &bufout, &bufoutlen))
+			{
+				free(scarlat);
+				return 1;
+			}
 
-			// /* Decode the memory. */
-			// if(huffman_decode_memory(scarlat, cur[0], &bufout, &bufoutlen))
-			// {
-			// 	free(scarlat);
-			// 	return 1;
-			// }
+			free(scarlat);
 
-			// free(scarlat);
+			// Write the memory to the file. 
+			if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
+			{
+				free(bufout);
+				return 1;
+			}
 
-			// printf("%s\n", bufout);
-
-			// // Write the memory to the file. 
-			// if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
-			// {
-			// 	free(bufout);
-			// 	return 1;
-			// }
-
-			// free(bufout);
+			free(bufout);
 		}
 
 		return 0;
@@ -294,7 +291,7 @@ memory_decode_file(FILE *in, FILE *out,
 	assert(in && out);
 
 	/* Read the file into memory. */
-	for (i = 0; i < (unsigned int)sz; i+=inc)
+	for (i = 0; i < (unsigned int)sz; i += inc)
 	{
 		unsigned char *tmp;
 		len += inc;
