@@ -175,10 +175,10 @@ main(int argc, char** argv)
 				strcat(scarlat, buf[i]);
 			}
 
-			for (i = 0; i < THREADS; ++i) {
-				free(buf[i]);
-				buf[i] = NULL;
-			}
+			// for (i = 0; i < THREADS; ++i) {
+			// 	free(buf[i]);
+			// 	buf[i] = NULL;
+			// }
 
 			/**
 			 * Do actual huffman algorithm
