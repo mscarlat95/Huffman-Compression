@@ -635,7 +635,8 @@ do_memory_encode(buf_cache *pc,
 	 * then output it.
 	 */
 	curbit > 0 ? write_cache(pc, &curbyte, sizeof(curbyte)) : 0;
-	return 8 - curbit;
+	
+	return (8 - curbit) % 8;
 }
 
 unsigned int merge_buffers(unsigned char **output,
@@ -770,6 +771,7 @@ int huffman_encode_memory(const unsigned char *bufin,
 
 	for (i = 0; i < CORES; ++i) {
 		tmp_size += _bufoutlen[i];
+		printf("%d\n", remains[i]);
 	}
 	
 	unsigned char *tmp = realloc(*pbufout, tmp_size * sizeof(char));
