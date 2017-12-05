@@ -673,7 +673,7 @@ int huffman_encode_memory(const unsigned char *bufin,
 
 	/* Flush the cache. */
 	flush_cache(&cache);
-	
+
 	/* Free the Huffman tree. */
 	free_huffman_tree(root);
 	free_encoder(se);

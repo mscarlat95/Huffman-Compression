@@ -771,7 +771,6 @@ int huffman_encode_memory(const unsigned char *bufin,
 
 	for (i = 0; i < CORES; ++i) {
 		tmp_size += _bufoutlen[i];
-		printf("%d\n", remains[i]);
 	}
 	
 	unsigned char *tmp = realloc(*pbufout, tmp_size * sizeof(char));
@@ -780,19 +779,10 @@ int huffman_encode_memory(const unsigned char *bufin,
 
 	unsigned int res = merge_buffers(&aux, _bufout, _bufoutlen, remains);
 
-	// for (i = 0; i < CORES; ++i) {
-	// 	memcpy(tmp + *pbufoutlen, _bufout[i], _bufoutlen[i]);
-	// 	*pbufoutlen += _bufoutlen[i];
-	// }
-
 	memcpy(tmp + *pbufoutlen, aux, res);
 
 	*pbufout = tmp;
 	*pbufoutlen += res;
-
-	//printf("%d\n", *pbufoutlen);
-	/* Flush the cache. */
-	//flush_cache(&cache);
 	
 	/* Free the Huffman tree. */
 	free_huffman_tree(root);
