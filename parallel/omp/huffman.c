@@ -651,7 +651,7 @@ unsigned int merge_buffers(unsigned char **output,
 	unsigned char sel_mask[9];
 
 	/**
-	 * Big Endian
+	 * Little Endian
 	sel_mask[0] = 0x00;	sel_mask[1] = 0x80;
 	sel_mask[2] = 0xc0;	sel_mask[3] = 0xe0;
 	sel_mask[4] = 0xf0;	sel_mask[5] = 0xf8;
@@ -659,7 +659,7 @@ unsigned int merge_buffers(unsigned char **output,
 	sel_mask[8] = 0xff; 
 	*/
 
-	// Little Endian
+	// Big Endian
 	sel_mask[0] = 0x00;	sel_mask[1] = 0x01;
 	sel_mask[2] = 0x03;	sel_mask[3] = 0x07;
 	sel_mask[4] = 0x0f;	sel_mask[5] = 0x1f;
@@ -688,7 +688,7 @@ unsigned int merge_buffers(unsigned char **output,
 			for (i = 0; i < bufout_piece_len[kk]; ++i) {
 				if (i == (bufout_piece_len[kk] - 1)) {
 					if (zeros[kk - 1] + zeros[kk] >= 8) {
-						bufout_piece_len[kk] -= 1;
+						bufout_piece_len[kk]--;
 						zeros[kk] = zeros[kk - 1] + zeros[kk] - 8;
 					} else {			
 						bufout_piece[kk][i] = bufout_piece[kk][i] >> zeros[kk - 1];
