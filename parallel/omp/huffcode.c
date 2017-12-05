@@ -24,7 +24,7 @@ extern char* optarg;
 
 static unsigned int memory_encode_read_file(FILE *in,
 									   unsigned char **buf, unsigned long sz);
-static unsigned int memory_decode_file(FILE *in, FILE *out,
+static unsigned int memory_decode_read_file(FILE *in,
 									   unsigned char **buf, unsigned long sz);
 
 static void
@@ -146,8 +146,6 @@ main(int argc, char** argv)
 	if(memory)
 	{
 		if (compress) {
-			printf("----- COMPRESS -----\n");
-
 			/**
 			 * Read file from disk in parallel
 			 */
@@ -167,7 +165,7 @@ main(int argc, char** argv)
 			 * Copy the contents of all 
 			 * partial buffers into one
 			 */
-			char *scarlat = malloc(newSize);
+			char *scarlat = malloc(newSize * sizeof(char));
 
 			strcpy(scarlat, buf[0]);
 			
@@ -197,66 +195,62 @@ main(int argc, char** argv)
 			if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
 			{
 				free(bufout);
-				printf("WRONG\n");
 				return 1;
 			}
 
 			free(bufout);
 		}
 		else {
-			printf("----- DECOMPRESS -----\n");
-			//#pragma omp parallel for schedule(dynamic) \
-			num_threads(4)
-			for(i = 0; i < 4; ++i) {
-				cur[i] = memory_decode_file(fp[i], out, &buf[i], (unsigned long) (sz / 4));
+			int a, pos = 0;
+			unsigned long size = sz / THREADS;
+
+			#pragma omp parallel for schedule(dynamic) \
+			num_threads(THREADS)
+			for(i = 0; i < THREADS; ++i) {
+				if (i == THREADS - 1) {
+					size = sz - (THREADS - 1) * size;
+				}
+				cur[i] = memory_decode_read_file(fp[i], &buf[i], size);
 			}
 
-			/* Encode the memory. */
-			for(i = 1; i < 4; i++) {
-				cur[0] += cur[i];
+			unsigned int sum = 0;
+			for(i = 0; i < THREADS; i++) {
+				sum += cur[i];
 			}
 
-			// char *scarlat = malloc(cur[0]);
-			// strcpy(scarlat, buf[0]);
-			// for (i = 1; i < 4; i++) {
-			// 	strcat(scarlat, buf[i]);
-			// }
-			// fprintf(out, "%s", scarlat);
+			char *scarlat = malloc(sum * sizeof(char));
 
-			for (i = 0; i < 4; ++i) {
-				fprintf(out, "%s", buf[i]);
+			for (i = 0; i <	THREADS; ++i) {
+				memcpy(scarlat + pos, buf[i], cur[i]);
+				pos += cur[i];
 			}
 
-			// for (i = 0; i < 4; i++) {
+			// for (i = 0; i < THREADS; i++) {
 			// 	free(buf[i]);
 			// 	buf[i] = NULL;
 			// }
 
-			// fflush(stdout);
+			/* Decode the memory. */
+			if(huffman_decode_memory(scarlat, sum, &bufout, &bufoutlen))
+			{
+				free(scarlat);
+				return 1;
+			}
 
-			// /* Decode the memory. */
-			// if(huffman_decode_memory(scarlat, cur[0], &bufout, &bufoutlen))
-			// {
-			// 	free(scarlat);
-			// 	return 1;
-			// }
+			free(scarlat);
 
-			// free(scarlat);
+			// Write the memory to the file. 
+			if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
+			{
+				free(bufout);
+				return 1;
+			}
 
-			// printf("%s\n", bufout);
-
-			// // Write the memory to the file. 
-			// if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
-			// {
-			// 	free(bufout);
-			// 	return 1;
-			// }
-
-			// free(bufout);
+			free(bufout);
 		}
 
 		return 0;
-	}
+}
 }
 
 static unsigned int
@@ -297,11 +291,11 @@ memory_encode_read_file(FILE *in,
 }
 
 static unsigned int
-memory_decode_file(FILE *in, FILE *out,
+memory_decode_read_file(FILE *in,
 				   unsigned char **buf, unsigned long sz)
 {
 	unsigned int i, len = 0, cur = 0, inc = 1024;
-	assert(in && out);
+	assert(in);
 
 	/* Read the file into memory. */
 	for (i = 0; i < (unsigned int)sz; i+=inc)
