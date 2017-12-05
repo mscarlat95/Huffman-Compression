@@ -197,6 +197,7 @@ main(int argc, char** argv)
 			if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
 			{
 				free(bufout);
+				printf("WRONG\n");
 				return 1;
 			}
 

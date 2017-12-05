@@ -18,6 +18,8 @@
 #include <netinet/in.h>
 #endif
 
+#define CORES 4
+
 typedef struct huffman_node_tag
 {
 	unsigned char isLeaf;
@@ -632,7 +634,88 @@ do_memory_encode(buf_cache *pc,
 	 * character did not fall on a byte boundary,
 	 * then output it.
 	 */
-	return curbit > 0 ? write_cache(pc, &curbyte, sizeof(curbyte)) : 0;
+	curbit > 0 ? write_cache(pc, &curbyte, sizeof(curbyte)) : 0;
+	return curbit;
+}
+
+unsigned int merge_buffers(unsigned char **output,
+						   unsigned char **bufout_piece,
+						   unsigned int *bufout_piece_len,
+						   unsigned int *zeros)
+{
+
+	int i;
+	unsigned int size = 0;
+	unsigned int cur_len = 0;
+
+	unsigned char sel_mask[9];
+
+	sel_mask[0] = 0x00;	sel_mask[1] = 0x80;
+	sel_mask[2] = 0xc0;	sel_mask[3] = 0xe0;
+	sel_mask[4] = 0xf0;	sel_mask[5] = 0xf8;
+	sel_mask[6] = 0xfc;	sel_mask[7] = 0xfe;
+	sel_mask[8] = 0xff; 
+
+	for (i = 0; i < CORES; ++i) {
+		size += bufout_piece_len[i];
+	}
+
+	*output = malloc(size * sizeof(unsigned char));
+
+	memcpy(*output, bufout_piece[0], bufout_piece_len[0]);
+	cur_len += bufout_piece_len[0];
+
+	unsigned char bits = sel_mask[zeros[0]] & bufout_piece[1][0];
+
+	(*output)[cur_len - 1] |= (bits >> (8 - zeros[0]));
+
+	for (i = 0; i < bufout_piece_len[1]; ++i) {
+		if (i == bufout_piece_len[1] - 1) {
+			if (zeros[0] + zeros[1] >= 8) {
+				bufout_piece_len[1] -= 1;
+				zeros[1] = (zeros[0] + zeros[1]) % 8;
+			} else {			
+				bufout_piece[1][i] = bufout_piece[1][i] << zeros[0];
+				zeros[1] += zeros[0];
+			}
+		} else {
+			bufout_piece[1][i] = bufout_piece[1][i] << zeros[0];
+			bits = sel_mask[zeros[0]] & bufout_piece[1][i + 1];
+			bufout_piece[1][i] |= (bits >> (8 - zeros[0]));
+		}
+	}
+	
+	// part 2
+	memcpy(*output + cur_len, bufout_piece[1], bufout_piece_len[1]);
+	cur_len += bufout_piece_len[1];
+
+	// bits = sel_mask[zeros[1]] & bufout_piece[2][0];
+
+	// (*output)[cur_len - 1] |= (bits >> (8 - zeros[1]));
+
+	// for (i = 0; i < bufout_piece_len[2]; ++i) {
+	// 	if (i == bufout_piece_len[2] - 1) {
+	// 		if (zeros[1] + zeros[2] >= 8) {
+	// 			bufout_piece_len[2] -= 1;
+	// 			zeros[2] = (zeros[1] + zeros[2]) % 8;
+	// 		} else {
+	// 			bufout_piece[2][i] = bufout_piece[2][i] << zeros[1];
+	// 			zeros[2] += zeros[1];
+	// 		}
+	// 	} else {
+	// 		bufout_piece[2][i] = bufout_piece[2][i] << zeros[1];
+	// 		bits = sel_mask[zeros[1]] & bufout_piece[2][i + 1];
+	// 		bufout_piece[2][i] |= (bits >> (8 - zeros[1]));
+	// 	}
+	// }
+	
+	memcpy(*output + cur_len, bufout_piece[2], bufout_piece_len[2]);
+	cur_len += bufout_piece_len[2];
+
+	memcpy(*output + cur_len, bufout_piece[3], bufout_piece_len[3]);
+	cur_len += bufout_piece_len[3];
+
+	return cur_len;
 }
 
 #define CACHE_SIZE 1024
@@ -649,9 +732,10 @@ int huffman_encode_memory(const unsigned char *bufin,
 	unsigned int symbol_count;
 	buf_cache cache;
 
-	buf_cache cache_tid[4];
-	unsigned char* _bufout[4];
-	unsigned int _bufoutlen[4];
+	buf_cache cache_tid[CORES];
+	unsigned char* _bufout[CORES];
+	unsigned int _bufoutlen[CORES];
+	unsigned int remains[CORES];
 
 	/* Ensure the arguments are valid. */
 	if(!pbufout || !pbufoutlen)
@@ -663,8 +747,8 @@ int huffman_encode_memory(const unsigned char *bufin,
 	/**
 	 * Init cache for every thread
 	 */
-	#pragma omp parallel for num_threads(4)
-	for (i = 0; i < 4; ++i) {
+	#pragma omp parallel for num_threads(CORES)
+	for (i = 0; i < CORES; ++i) {
 		_bufout[i] = NULL;
 		_bufoutlen[i] = 0;
 		init_cache(&cache_tid[i], CACHE_SIZE, &_bufout[i], &_bufoutlen[i]);
@@ -683,23 +767,38 @@ int huffman_encode_memory(const unsigned char *bufin,
 	rc = write_code_table_to_memory(&cache, se, symbol_count);
 	flush_cache(&cache);
 	if(rc == 0) {
-		#pragma omp parallel for num_threads(4)
-		for (i = 0; i < 4; ++i) {
-			do_memory_encode(&cache_tid[i], bufin + i * bufinlen / 4, bufinlen / 4, se);
+
+		//#pragma omp parallel for num_threads(CORES)
+		for (i = 0; i < CORES; ++i) {
+			remains[i] = do_memory_encode(&cache_tid[i], bufin + (i * bufinlen / CORES), bufinlen / CORES, se);
 			flush_cache(&cache_tid[i]);
 		}
-		//rc = do_memory_encode(&cache, bufin, bufinlen, se);
 	}
 
-	unsigned char *tmp = realloc(*pbufout, _bufoutlen[0] + _bufoutlen[1] + _bufoutlen[2] + _bufoutlen[3] + *pbufoutlen);
+	unsigned int tmp_size = *pbufoutlen;
 
-	for (i = 0; i < 4; ++i) {
-		memcpy(tmp + *pbufoutlen, _bufout[i], _bufoutlen[i]);
-		*pbufoutlen += _bufoutlen[i];
+	for (i = 0; i < CORES; ++i) {
+		tmp_size += _bufoutlen[i];
+		printf("%d\n", remains[i]);
 	}
+	
+	unsigned char *tmp = realloc(*pbufout, tmp_size * sizeof(char));
+
+	unsigned char *aux;
+
+	unsigned int res = merge_buffers(&aux, _bufout, _bufoutlen, remains);
+
+	// for (i = 0; i < CORES; ++i) {
+	// 	memcpy(tmp + *pbufoutlen, _bufout[i], _bufoutlen[i]);
+	// 	*pbufoutlen += _bufoutlen[i];
+	// }
+
+	memcpy(tmp + *pbufoutlen, aux, res);
 
 	*pbufout = tmp;
+	*pbufoutlen += res;
 
+	printf("%d\n", *pbufoutlen);
 	/* Flush the cache. */
 	//flush_cache(&cache);
 	
@@ -707,7 +806,7 @@ int huffman_encode_memory(const unsigned char *bufin,
 	free_huffman_tree(root);
 	free_encoder(se);
 	free_cache(&cache);
-	return rc;
+	return 0;
 }
 
 int huffman_decode_memory(const unsigned char *bufin,
