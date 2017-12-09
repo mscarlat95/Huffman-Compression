@@ -11,9 +11,9 @@ CFLAGS+=-arch ${ARCH}
 endif
 
 #all: huffcode libhuffman.a
-all: pthread
+all: pthreads
 
-pthread:
+pthreads:
 	gcc huffman.c huffcode.c $(CFLAGS) -o huffcode -lpthread
 
 huffcode: huffcode.o libhuffman.a

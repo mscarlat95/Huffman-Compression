@@ -820,7 +820,7 @@ int huffman_encode_memory(const unsigned char *bufin,
 	rc = write_code_table_to_memory(&cache, se, symbol_count);
 	flush_cache(&cache);
 	if(rc == 0) {
-		//#pragma omp parallel for num_threads(CORES)
+
 		for (i = 0; i < CORES; ++i) {
 
 			arguments_2[i].cache_tid = arguments_1[i].cache_tid;
