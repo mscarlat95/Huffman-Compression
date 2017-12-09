@@ -3,14 +3,18 @@
 # or
 # make ARCH=x86_64
 
-CFLAGS=-g -Wall -Werror
+CFLAGS=-g
 
 ifdef ARCH
 LDFLAGS+=-arch ${ARCH}
 CFLAGS+=-arch ${ARCH}
 endif
 
-all: huffcode libhuffman.a
+#all: huffcode libhuffman.a
+all: pthread
+
+pthread:
+	gcc huffman.c huffcode.c $(CFLAGS) -o huffcode -lpthread
 
 huffcode: huffcode.o libhuffman.a
 	$(CC) $(LDFLAGS) -o $@ huffcode.o libhuffman.a
@@ -21,4 +25,7 @@ libhuffman.a: huffman.o
 	$(AR) r $@ $<
 
 clean:
-	$(RM) *.o *~ core huffcode huffcode.exe libhuffman.a
+	$(RM) *.o *~ core huffcode huffcode.exe libhuffman.a compressed
+
+run:
+	./huffcode -i ../../inputFile -o compressed

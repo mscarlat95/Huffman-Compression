@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <pthread.h>
 
 #ifdef WIN32
 #include <malloc.h>
@@ -19,8 +20,71 @@ extern char* optarg;
 #include <unistd.h>
 #endif
 
-static int memory_encode_file(FILE *in, FILE *out);
-static int memory_decode_file(FILE *in, FILE *out);
+#define THREADS 4
+
+static unsigned int memory_encode_read_file(FILE *in,
+									   unsigned char **buf, unsigned long sz);
+static unsigned int memory_decode_read_file(FILE *in,
+									   unsigned char **buf, unsigned long sz);
+
+struct open_files
+{
+  FILE *fp;
+  char *file_in;
+};
+
+struct fseek_files
+{
+  FILE *fp;
+  unsigned long sz;
+  unsigned int pos;
+};
+
+struct code_struct
+{
+  FILE *fp;
+  unsigned int sz;
+  unsigned char **buf;
+  unsigned int cur;
+
+};
+
+void *thread_open_file(void *arguments)
+{
+	unsigned int i;
+	struct open_files *args = (struct open_files *)arguments;
+	args -> fp = fopen(args -> file_in, "rb");
+	if( !(args -> fp) )
+	{
+		fprintf(stderr,
+				"Can't open input file '%s': %s\n",
+				args -> file_in, strerror(errno));
+		exit(1);
+	}
+}
+
+void *thread_fseek_file(void *arguments)
+{
+
+	struct fseek_files *args = (struct fseek_files *)arguments;	
+
+	fseek(args -> fp, args -> pos * (unsigned long) (args -> sz / THREADS), SEEK_SET);
+}
+
+void *thread_encode_file(void *arguments)
+{
+	struct code_struct *args = (struct code_struct *)arguments;
+	
+	args -> cur = memory_encode_read_file(args -> fp, args -> buf,
+				  (unsigned long) (args -> sz / THREADS));
+}
+
+void *thread_decode_file(void *arguments)
+{
+	struct code_struct *args = (struct code_struct *)arguments;
+
+	args -> cur = memory_decode_read_file(args -> fp, args -> buf, args -> sz);
+}
 
 static void
 version(FILE *out)
@@ -46,11 +110,22 @@ usage(FILE* out)
 int
 main(int argc, char** argv)
 {
-	char memory = 0;
+	unsigned char *buf[THREADS] = {NULL, NULL, NULL, NULL};
+	char memory = 1;
 	char compress = 1;
 	int opt;
-	const char *file_in = NULL, *file_out = NULL;
-	FILE *in = stdin;
+	unsigned int i;
+    char *file_in = NULL, *file_out = NULL;
+	
+	unsigned char* bufout = NULL;
+	unsigned int bufoutlen = 0;
+
+	struct open_files arguments_1[THREADS];
+	struct fseek_files arguments_2[THREADS];
+	struct code_struct arguments_3[THREADS];
+
+	pthread_t threads[THREADS] = {0};
+	
 	FILE *out = stdout;
 
 	/* Get the command line arguments. */
@@ -76,26 +151,36 @@ main(int argc, char** argv)
 		case 'v':
 			version(stdout);
 			return 0;
-		case 'm':
-			memory = 1;
-			break;
 		default:
 			usage(stderr);
 			return 1;
 		}
 	}
 
-	/* If an input file is given then open it. */
+	FILE *fp[THREADS];
+
+	/* If an input file is given then open it
+	 * on several positions
+	 */
 	if(file_in)
 	{
-		in = fopen(file_in, "rb");
-		if(!in)
-		{
-			fprintf(stderr,
-					"Can't open input file '%s': %s\n",
-					file_in, strerror(errno));
-			return 1;
-		}
+		for(i = 0; i < THREADS; ++i) {
+			arguments_1[i].fp = fp[i];
+			arguments_1[i].file_in = file_in;
+
+			if ( pthread_create(&threads[i], NULL, thread_open_file, (void *)&arguments_1[i]) ) {
+	         fprintf(stderr, "Error creating threads\n");
+	         return -1;
+	        }
+	    }
+
+	    for(i = 0; i < THREADS; i++) {
+	        // wait for the threads to finish the initialisation
+	        if ( pthread_join(threads[i], NULL) ) {
+	          fprintf(stderr, "Error joining threads\n");
+	          return -1;
+	        }
+	    }
 	}
 
 	/* If an output file is given then create it. */
@@ -111,109 +196,233 @@ main(int argc, char** argv)
 		}
 	}
 
+	/**
+	 * Get file size
+	 */
+	fseek(arguments_1[0].fp, 0L, SEEK_END);
+	unsigned long sz = (unsigned long)ftell(arguments_1[0].fp);
+	fseek(arguments_1[0].fp, 0L, SEEK_SET);
+
+	/**
+	 * Increment each file pointer to its specific chunk size
+	 */
+	for(i = 0; i < THREADS; ++i)
+	{
+		arguments_2[i].fp = arguments_1[i].fp;
+		arguments_2[i].sz = sz;
+		arguments_2[i].pos = i;
+		
+		if ( pthread_create(&threads[i], NULL, thread_fseek_file, (void *)&arguments_2[i]) ) {
+	         fprintf(stderr, "Error creating threads\n");
+	         return -1;
+	    }
+	}
+
+	for(i = 0; i < THREADS; ++i)
+	{
+		if ( pthread_join(threads[i], NULL) ) {
+	          fprintf(stderr, "Error joining threads\n");
+	          return -1;
+	    }
+	}
+
 	if(memory)
 	{
-		return compress ?
-			memory_encode_file(in, out) : memory_decode_file(in, out);
-	}
+		if (compress) {
+			/**
+			 * Read file from disk in parallel
+			 */
+			for(i = 0; i < THREADS; ++i) {
 
-	return compress ?
-		huffman_encode_file(in, out) : huffman_decode_file(in, out);
+				arguments_3[i].fp = arguments_1[i].fp;
+				arguments_3[i].sz = sz;
+				arguments_3[i].buf = &buf[i];
+				
+				if ( pthread_create(&threads[i], NULL, thread_encode_file, (void *)&arguments_3[i]) ) {
+	         		fprintf(stderr, "Error creating threads\n");
+	         		return -1;
+	        	}
+			}
+
+			for(i = 0; i < THREADS; ++i) {
+				if ( pthread_join(threads[i], NULL) ) {
+	          		fprintf(stderr, "Error joining threads\n");
+	          		return -1;
+	    		}
+			}
+
+			// Allocate the new full buffer
+			int newSize = 0;
+			for(i = 0; i < THREADS; ++i) {
+				newSize += strlen(buf[i]);
+			}
+
+			/**
+			 * Copy the contents of all 
+			 * partial buffers into one
+			 */
+			char *text = malloc(newSize * sizeof(char));
+
+			strcpy(text, buf[0]);
+			
+			for (i = 1; i < THREADS; ++i) {
+				strcat(text, buf[i]);
+			}
+
+			/**
+			 * Do actual huffman algorithm
+			 * TODO - add 1 thread to write to memory the table
+			 *		- add 4 threads to write to memory their segments of content
+			 */
+			if(huffman_encode_memory(text, newSize, &bufout, &bufoutlen))
+			{
+				free(text);
+				return 1;
+			}
+
+			free(text);
+
+			/* Write the memory to the file. */
+			if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
+			{
+				free(bufout);
+				return 1;
+			}
+
+			free(bufout);
+		}
+		else {
+			int a, pos = 0;
+			unsigned long size = sz / THREADS;
+
+			for(i = 0; i < THREADS; ++i) {
+
+				arguments_3[i].fp = arguments_1[i].fp;
+				arguments_3[i].buf = &buf[i];
+
+				if (i == THREADS - 1) {
+					arguments_3[i].sz = sz - (THREADS - 1) * size;
+				}
+				else {
+					arguments_3[i].sz = size;
+				}
+			
+				if ( pthread_create(&threads[i], NULL, thread_decode_file, (void *)&arguments_3[i]) ) {
+	         		fprintf(stderr, "Error creating threads\n");
+	         		return -1;
+	        	}
+			}
+
+			for(i = 0; i < THREADS; ++i) {
+				if ( pthread_join(threads[i], NULL) ) {
+	          		fprintf(stderr, "Error joining threads\n");
+	          		return -1;
+	    		}
+			}
+
+			unsigned int sum = 0;
+			for(i = 0; i < THREADS; i++) {
+				sum += arguments_3[i].cur;
+			}
+
+			char *text = malloc(sum * sizeof(char));
+
+			for (i = 0; i <	THREADS; ++i) {
+				memcpy(text + pos, buf[i], arguments_3[i].cur);
+				pos += arguments_3[i].cur;
+			}
+
+			/* Decode the memory. */
+			if(huffman_decode_memory(text, sum, &bufout, &bufoutlen))
+			{
+				free(text);
+				return 1;
+			}
+
+			free(text);
+
+			// Write the memory to the file. 
+			if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
+			{
+				free(bufout);
+				return 1;
+			}
+
+			free(bufout);
+		}
+
+		return 0;
+}
 }
 
-static int
-memory_encode_file(FILE *in, FILE *out)
+static unsigned int
+memory_encode_read_file(FILE *in,
+				   unsigned char **buf, unsigned long sz)
 {
-	unsigned char *buf = NULL, *bufout = NULL;
-	unsigned int len = 0, cur = 0, inc = 1024, bufoutlen = 0;
+	unsigned int i, len = 0, cur = 0, inc = 1024;
 
-	assert(in && out);
+	assert(in);
 
 	/* Read the file into memory. */
-	while(!feof(in))
+	for(i = 0; i < (unsigned int)sz; i += inc)
 	{
 		unsigned char *tmp;
 		len += inc;
-		tmp = (unsigned char*)realloc(buf, len);
+		tmp = (unsigned char*)realloc(*buf, len);
 		if(!tmp)
 		{
-			if(buf)
+			if(*buf)
 				free(buf);
-			return 1;
+			return -1;
 		}
 
-		buf = tmp;
-		cur += fread(buf + cur, 1, inc, in);
+		*buf = tmp;
+		if(cur + inc > sz) {
+			cur += fread(*buf + cur, 1, (unsigned int)(sz - cur), in);
+		} 
+		else {
+			cur += fread(*buf + cur, 1, inc, in);
+		}
 	}
 
-	if(!buf)
-		return 1;
-
-	/* Encode the memory. */
-	if(huffman_encode_memory(buf, cur, &bufout, &bufoutlen))
-	{
-		free(buf);
-		return 1;
+	if(NULL != *buf) {
+		return cur;
 	}
-
-	free(buf);
-
-	/* Write the memory to the file. */
-	if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
-	{
-		free(bufout);
-		return 1;
-	}
-
-	free(bufout);
-
-	return 0;
+	return -1;
 }
 
-static int
-memory_decode_file(FILE *in, FILE *out)
+static unsigned int
+memory_decode_read_file(FILE *in,
+				   unsigned char **buf, unsigned long sz)
 {
-	unsigned char *buf = NULL, *bufout = NULL;
-	unsigned int len = 0, cur = 0, inc = 1024, bufoutlen = 0;
-	assert(in && out);
+	unsigned int i, len = 0, cur = 0, inc = 1024;
+	assert(in);
 
 	/* Read the file into memory. */
-	while(!feof(in))
+	for (i = 0; i < (unsigned int)sz; i+=inc)
 	{
 		unsigned char *tmp;
 		len += inc;
-		tmp = (unsigned char*)realloc(buf, len);
+		tmp = (unsigned char*)realloc(*buf, len);
 		if(!tmp)
 		{
-			if(buf)
-				free(buf);
+			if(*buf) {
+				free(*buf);
+			}
 			return 1;
 		}
 
-		buf = tmp;
-		cur += fread(buf + cur, 1, inc, in);
+		*buf = tmp;
+		if(cur + inc > sz) {
+			cur += fread(*buf + cur, 1, (unsigned int)(sz - cur), in);
+		} 
+		else {
+			cur += fread(*buf + cur, 1, inc, in);
+		}
 	}
 
-	if(!buf)
-		return 1;
-
-	/* Decode the memory. */
-	if(huffman_decode_memory(buf, cur, &bufout, &bufoutlen))
-	{
-		free(buf);
-		return 1;
+	if(NULL != *buf) {
+		return cur;
 	}
-
-	free(buf);
-
-	/* Write the memory to the file. */
-	if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
-	{
-		free(bufout);
-		return 1;
-	}
-
-	free(bufout);
-
-	return 0;
+	return -1;
 }

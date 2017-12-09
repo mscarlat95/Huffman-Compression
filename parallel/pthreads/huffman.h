@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <omp.h>
 
 int huffman_encode_file(FILE *in, FILE *out);
 int huffman_decode_file(FILE *in, FILE *out);

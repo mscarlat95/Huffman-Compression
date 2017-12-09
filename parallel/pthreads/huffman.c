@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <pthread.h>
 #include "huffman.h"
 
 #ifdef WIN32
@@ -17,6 +18,9 @@
 #else
 #include <netinet/in.h>
 #endif
+
+#define CACHE_SIZE 1024
+#define CORES 4
 
 typedef struct huffman_node_tag
 {
@@ -46,6 +50,63 @@ typedef struct huffman_code_tag
 	   bit is at position 0 in bits[1]. */
 	unsigned char *bits;
 } huffman_code;
+
+#define MAX_SYMBOLS 256
+typedef huffman_node* SymbolFrequencies[MAX_SYMBOLS];
+typedef huffman_code* SymbolEncoder[MAX_SYMBOLS];
+
+typedef struct buf_cache_tag
+{
+	unsigned char *cache;
+	unsigned int cache_len;
+	unsigned int cache_cur;
+	unsigned char **pbufout;
+	unsigned int *pbufoutlen;
+} buf_cache;
+
+int flush_cache(buf_cache* pc);
+
+static int
+do_memory_encode(buf_cache *pc, const unsigned char* bufin,
+				 unsigned int bufinlen, SymbolEncoder *se);
+
+int init_cache(buf_cache* pc, unsigned int cache_size,
+			   unsigned char **pbufout, unsigned int *pbufoutlen);
+ 
+struct cache_struct
+{
+  unsigned char **_bufout;
+  unsigned int *_bufoutlen;
+  buf_cache *cache_tid;
+};
+
+struct block_encode_struct
+{
+  const unsigned char **bufin;
+  unsigned int *bufinlen;
+  buf_cache *cache_tid;
+  unsigned int pos;
+  unsigned int remains;
+  SymbolEncoder **se;
+};
+
+void *init_cache_for_threads(void *arguments)
+{
+	struct cache_struct *args = (struct cache_struct *)arguments;
+
+	*(args -> _bufoutlen) = 0;
+	init_cache(args -> cache_tid, CACHE_SIZE, args -> _bufout, args -> _bufoutlen);
+}
+
+void *do_memory_encode_threads(void *arguments)
+{
+	struct block_encode_struct *args = (struct block_encode_struct *)arguments;
+
+	args -> remains = do_memory_encode(args -> cache_tid,
+					  *(args -> bufin) + (args -> pos * ( *(args -> bufinlen) ) / CORES),
+					  *(args -> bufinlen) / CORES, *(args -> se) );
+	flush_cache(args -> cache_tid);
+}
 
 static unsigned long
 numbytes_from_numbits(unsigned long numbits)
@@ -136,10 +197,6 @@ new_code(const huffman_node* leaf)
 	return p;
 }
 
-#define MAX_SYMBOLS 256
-typedef huffman_node* SymbolFrequencies[MAX_SYMBOLS];
-typedef huffman_code* SymbolEncoder[MAX_SYMBOLS];
-
 static huffman_node*
 new_leaf_node(unsigned char symbol)
 {
@@ -204,26 +261,9 @@ static void
 init_frequencies(SymbolFrequencies *pSF)
 {
 	memset(*pSF, 0, sizeof(SymbolFrequencies));
-#if 0
-	unsigned int i;
-	for(i = 0; i < MAX_SYMBOLS; ++i)
-	{
-		unsigned char uc = (unsigned char)i;
-		(*pSF)[i] = new_leaf_node(uc);
-	}
-#endif
 }
 
-typedef struct buf_cache_tag
-{
-	unsigned char *cache;
-	unsigned int cache_len;
-	unsigned int cache_cur;
-	unsigned char **pbufout;
-	unsigned int *pbufoutlen;
-} buf_cache;
-
-static int init_cache(buf_cache* pc,
+int init_cache(buf_cache* pc,
 					  unsigned int cache_size,
 					  unsigned char **pbufout,
 					  unsigned int *pbufoutlen)
@@ -253,7 +293,7 @@ static void free_cache(buf_cache* pc)
 	}
 }
 
-static int flush_cache(buf_cache* pc)
+int flush_cache(buf_cache* pc)
 {
 	assert(pc);
 	
@@ -309,34 +349,11 @@ static int write_cache(buf_cache* pc,
 }
 
 static unsigned int
-get_symbol_frequencies(SymbolFrequencies *pSF, FILE *in)
-{
-	int c;
-	unsigned int total_count = 0;
-	
-	/* Set all frequencies to 0. */
-	init_frequencies(pSF);
-	
-	/* Count the frequency of each symbol in the input file. */
-	while((c = fgetc(in)) != EOF)
-	{
-		unsigned char uc = c;
-		if(!(*pSF)[uc])
-			(*pSF)[uc] = new_leaf_node(uc);
-		++(*pSF)[uc]->count;
-		++total_count;
-	}
-
-	return total_count;
-}
-
-static unsigned int
 get_symbol_frequencies_from_memory(SymbolFrequencies *pSF,
 								   const unsigned char *bufin,
 								   unsigned int bufinlen)
 {
 	unsigned int i;
-	unsigned int total_count = 0;
 	
 	/* Set all frequencies to 0. */
 	init_frequencies(pSF);
@@ -348,10 +365,9 @@ get_symbol_frequencies_from_memory(SymbolFrequencies *pSF,
 		if(!(*pSF)[uc])
 			(*pSF)[uc] = new_leaf_node(uc);
 		++(*pSF)[uc]->count;
-		++total_count;
 	}
 
-	return total_count;
+	return bufinlen;
 }
 
 /*
@@ -381,20 +397,6 @@ SFComp(const void *p1, const void *p2)
 	return 0;
 }
 
-#if 0
-static void
-print_freqs(SymbolFrequencies * pSF)
-{
-	size_t i;
-	for(i = 0; i < MAX_SYMBOLS; ++i)
-	{
-		if((*pSF)[i])
-			printf("%d, %ld\n", (*pSF)[i]->symbol, (*pSF)[i]->count);
-		else
-			printf("NULL\n");
-	}
-}
-#endif
 
 /*
  * build_symbol_encoder builds a SymbolEncoder by walking
@@ -429,19 +431,9 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 	unsigned int n = 0;
 	huffman_node *m1 = NULL, *m2 = NULL;
 	SymbolEncoder *pSE = NULL;
-	
-#if 0
-	printf("BEFORE SORT\n");
-	print_freqs(pSF);
-#endif
 
 	/* Sort the symbol frequency array by ascending frequency. */
 	qsort((*pSF), MAX_SYMBOLS, sizeof((*pSF)[0]), SFComp);
-
-#if 0	
-	printf("AFTER SORT\n");
-	print_freqs(pSF);
-#endif
 
 	/* Get the number of symbols. */
 	for(n = 0; n < MAX_SYMBOLS && (*pSF)[n]; ++n)
@@ -477,62 +469,6 @@ calculate_huffman_codes(SymbolFrequencies * pSF)
 	return pSE;
 }
 
-/*
- * Write the huffman code table. The format is:
- * 4 byte code count in network byte order.
- * 4 byte number of bytes encoded
- *   (if you decode the data, you should get this number of bytes)
- * code1
- * ...
- * codeN, where N is the count read at the begginning of the file.
- * Each codeI has the following format:
- * 1 byte symbol, 1 byte code bit length, code bytes.
- * Each entry has numbytes_from_numbits code bytes.
- * The last byte of each code may have extra bits, if the number of
- * bits in the code is not a multiple of 8.
- */
-static int
-write_code_table(FILE* out, SymbolEncoder *se, uint32_t symbol_count)
-{
-	uint32_t i, count = 0;
-	
-	/* Determine the number of entries in se. */
-	for(i = 0; i < MAX_SYMBOLS; ++i)
-	{
-		if((*se)[i])
-			++count;
-	}
-
-	/* Write the number of entries in network byte order. */
-	i = htonl(count);
-	if(fwrite(&i, sizeof(i), 1, out) != 1)
-		return 1;
-
-	/* Write the number of bytes that will be encoded. */
-	symbol_count = htonl(symbol_count);
-	if(fwrite(&symbol_count, sizeof(symbol_count), 1, out) != 1)
-		return 1;
-
-	/* Write the entries. */
-	for(i = 0; i < MAX_SYMBOLS; ++i)
-	{
-		huffman_code *p = (*se)[i];
-		if(p)
-		{
-			unsigned int numbytes;
-			/* Write the 1 byte symbol. */
-			fputc((unsigned char)i, out);
-			/* Write the 1 byte code bit length. */
-			fputc(p->numbits, out);
-			/* Write the code bytes. */
-			numbytes = numbytes_from_numbits(p->numbits);
-			if(fwrite(p->bits, 1, numbytes, out) != numbytes)
-				return 1;
-		}
-	}
-
-	return 0;
-}
 
 /*
  * Allocates memory and sets *pbufout to point to it. The memory
@@ -588,109 +524,6 @@ write_code_table_to_memory(buf_cache *pc,
 	}
 
 	return 0;
-}
-
-/*
- * read_code_table builds a Huffman tree from the code
- * in the in file. This function returns NULL on error.
- * The returned value should be freed with free_huffman_tree.
- */
-static huffman_node*
-read_code_table(FILE* in, unsigned int *pDataBytes)
-{
-	huffman_node *root = new_nonleaf_node(0, NULL, NULL);
-	uint32_t count;
-	
-	/* Read the number of entries.
-	   (it is stored in network byte order). */
-	if(fread(&count, sizeof(count), 1, in) != 1)
-	{
-		free_huffman_tree(root);
-		return NULL;
-	}
-
-	count = ntohl(count);
-
-	/* Read the number of data bytes this encoding represents. */
-	if(fread(pDataBytes, sizeof(*pDataBytes), 1, in) != 1)
-	{
-		free_huffman_tree(root);
-		return NULL;
-	}
-
-	*pDataBytes = ntohl(*pDataBytes);
-
-
-	/* Read the entries. */
-	while(count-- > 0)
-	{
-		int c;
-		unsigned int curbit;
-		unsigned char symbol;
-		unsigned char numbits;
-		unsigned char numbytes;
-		unsigned char *bytes;
-		huffman_node *p = root;
-		
-		if((c = fgetc(in)) == EOF)
-		{
-			free_huffman_tree(root);
-			return NULL;
-		}
-		symbol = (unsigned char)c;
-		
-		if((c = fgetc(in)) == EOF)
-		{
-			free_huffman_tree(root);
-			return NULL;
-		}
-		
-		numbits = (unsigned char)c;
-		numbytes = (unsigned char)numbytes_from_numbits(numbits);
-		bytes = (unsigned char*)malloc(numbytes);
-		if(fread(bytes, 1, numbytes, in) != numbytes)
-		{
-			free(bytes);
-			free_huffman_tree(root);
-			return NULL;
-		}
-
-		/*
-		 * Add the entry to the Huffman tree. The value
-		 * of the current bit is used switch between
-		 * zero and one child nodes in the tree. New nodes
-		 * are added as needed in the tree.
-		 */
-		for(curbit = 0; curbit < numbits; ++curbit)
-		{
-			if(get_bit(bytes, curbit))
-			{
-				if(p->one == NULL)
-				{
-					p->one = curbit == (unsigned char)(numbits - 1)
-						? new_leaf_node(symbol)
-						: new_nonleaf_node(0, NULL, NULL);
-					p->one->parent = p;
-				}
-				p = p->one;
-			}
-			else
-			{
-				if(p->zero == NULL)
-				{
-					p->zero = curbit == (unsigned char)(numbits - 1)
-						? new_leaf_node(symbol)
-						: new_nonleaf_node(0, NULL, NULL);
-					p->zero->parent = p;
-				}
-				p = p->zero;
-			}
-		}
-		
-		free(bytes);
-	}
-
-	return root;
 }
 
 static int
@@ -809,47 +642,6 @@ read_code_table_from_memory(const unsigned char* bufin,
 }
 
 static int
-do_file_encode(FILE* in, FILE* out, SymbolEncoder *se)
-{
-	unsigned char curbyte = 0;
-	unsigned char curbit = 0;
-	int c;
-	
-	while((c = fgetc(in)) != EOF)
-	{
-		unsigned char uc = (unsigned char)c;
-		huffman_code *code = (*se)[uc];
-		unsigned long i;
-		
-		for(i = 0; i < code->numbits; ++i)
-		{
-			/* Add the current bit to curbyte. */
-			curbyte |= get_bit(code->bits, i) << curbit;
-
-			/* If this byte is filled up then write it
-			 * out and reset the curbit and curbyte. */
-			if(++curbit == 8)
-			{
-				fputc(curbyte, out);
-				curbyte = 0;
-				curbit = 0;
-			}
-		}
-	}
-
-	/*
-	 * If there is data in curbyte that has not been
-	 * output yet, which means that the last encoded
-	 * character did not fall on a byte boundary,
-	 * then output it.
-	 */
-	if(curbit > 0)
-		fputc(curbyte, out);
-
-	return 0;
-}
-
-static int
 do_memory_encode(buf_cache *pc,
 				 const unsigned char* bufin,
 				 unsigned int bufinlen,
@@ -888,78 +680,82 @@ do_memory_encode(buf_cache *pc,
 	 * character did not fall on a byte boundary,
 	 * then output it.
 	 */
-	return curbit > 0 ? write_cache(pc, &curbyte, sizeof(curbyte)) : 0;
-}
-
-/*
- * huffman_encode_file huffman encodes in to out.
- */
-int
-huffman_encode_file(FILE *in, FILE *out)
-{
-	SymbolFrequencies sf;
-	SymbolEncoder *se;
-	huffman_node *root = NULL;
-	int rc;
-	unsigned int symbol_count;
-
-	/* Get the frequency of each symbol in the input file. */
-	symbol_count = get_symbol_frequencies(&sf, in);
-
-	/* Build an optimal table from the symbolCount. */
-	se = calculate_huffman_codes(&sf);
-	root = sf[0];
-
-	/* Scan the file again and, using the table
-	   previously built, encode it into the output file. */
-	rewind(in);
-	rc = write_code_table(out, se, symbol_count);
-	if(rc == 0)
-		rc = do_file_encode(in, out, se);
-
-	/* Free the Huffman tree. */
-	free_huffman_tree(root);
-	free_encoder(se);
-	return rc;
-}
-
-int
-huffman_decode_file(FILE *in, FILE *out)
-{
-	huffman_node *root, *p;
-	int c;
-	unsigned int data_count;
+	curbit > 0 ? write_cache(pc, &curbyte, sizeof(curbyte)) : 0;
 	
-	/* Read the Huffman code table. */
-	root = read_code_table(in, &data_count);
-	if(!root)
-		return 1;
+	return (8 - curbit) % 8;
+}
 
-	/* Decode the file. */
-	p = root;
-	while(data_count > 0 && (c = fgetc(in)) != EOF)
-	{
-		unsigned char byte = (unsigned char)c;
-		unsigned char mask = 1;
-		while(data_count > 0 && mask)
-		{
-			p = byte & mask ? p->one : p->zero;
-			mask <<= 1;
+unsigned int merge_buffers(unsigned char **output,
+						   unsigned char **bufout_piece,
+						   unsigned int *bufout_piece_len,
+						   unsigned int *zeros)
+{
 
-			if(p->isLeaf)
-			{
-				fputc(p->symbol, out);
-				p = root;
-				--data_count;
-			}
-		}
+	int i;
+	unsigned int size = 0;
+	unsigned int cur_len = 0;
+
+	unsigned char sel_mask[9];
+
+	/**
+	 * Little Endian
+	sel_mask[0] = 0x00;	sel_mask[1] = 0x80;
+	sel_mask[2] = 0xc0;	sel_mask[3] = 0xe0;
+	sel_mask[4] = 0xf0;	sel_mask[5] = 0xf8;
+	sel_mask[6] = 0xfc;	sel_mask[7] = 0xfe;
+	sel_mask[8] = 0xff; 
+	*/
+
+	// Big Endian
+	sel_mask[0] = 0x00;	sel_mask[1] = 0x01;
+	sel_mask[2] = 0x03;	sel_mask[3] = 0x07;
+	sel_mask[4] = 0x0f;	sel_mask[5] = 0x1f;
+	sel_mask[6] = 0x3f;	sel_mask[7] = 0x7f;
+	sel_mask[8] = 0xff;
+
+	for (i = 0; i < CORES; ++i) {
+		size += bufout_piece_len[i];
 	}
 
-	free_huffman_tree(root);
-	return 0;
-}
+	*output = malloc(size * sizeof(unsigned char));
 
-#define CACHE_SIZE 1024
+	memcpy(*output, bufout_piece[0], bufout_piece_len[0]);
+	cur_len += bufout_piece_len[0];
+
+	unsigned char bits;
+	unsigned int padding;
+	int kk;
+
+	for (kk = 1; kk < CORES; ++kk) {
+		if (zeros[kk - 1] != 0) { 
+			bits = sel_mask[zeros[kk-1]] & bufout_piece[kk][0];
+
+			(*output)[cur_len - 1] |= (bits << (8 - zeros[kk - 1]));
+
+			for (i = 0; i < bufout_piece_len[kk]; ++i) {
+				if (i == (bufout_piece_len[kk] - 1)) {
+					if (zeros[kk - 1] + zeros[kk] >= 8) {
+						bufout_piece_len[kk]--;
+						zeros[kk] = zeros[kk - 1] + zeros[kk] - 8;
+					} else {			
+						bufout_piece[kk][i] = bufout_piece[kk][i] >> zeros[kk - 1];
+						zeros[kk] += zeros[kk - 1];
+					}
+				} else {
+					padding = zeros[kk - 1];
+					bufout_piece[kk][i] >>= padding;
+					bits = sel_mask[padding] & bufout_piece[kk][i + 1];
+					bufout_piece[kk][i] |= (bits << (8 - padding));
+				}
+			}
+		}
+		
+		memcpy(*output + cur_len, bufout_piece[kk], bufout_piece_len[kk]);
+		cur_len += bufout_piece_len[kk];
+	}
+
+	return cur_len;
+}
 
 int huffman_encode_memory(const unsigned char *bufin,
 						  unsigned int bufinlen,
@@ -969,9 +765,14 @@ int huffman_encode_memory(const unsigned char *bufin,
 	SymbolFrequencies sf;
 	SymbolEncoder *se;
 	huffman_node *root = NULL;
-	int rc;
+	int rc, i;
 	unsigned int symbol_count;
 	buf_cache cache;
+
+	buf_cache cache_tid[CORES];
+	unsigned char* _bufout[CORES];
+	unsigned int _bufoutlen[CORES];
+	unsigned int remains[CORES];
 
 	/* Ensure the arguments are valid. */
 	if(!pbufout || !pbufoutlen)
@@ -979,6 +780,33 @@ int huffman_encode_memory(const unsigned char *bufin,
 
 	if(init_cache(&cache, CACHE_SIZE, pbufout, pbufoutlen))
 		return 1;
+
+	pthread_t threads[CORES] = {0};
+	
+	struct cache_struct arguments_1[CORES];
+	struct block_encode_struct arguments_2[CORES];
+
+	/**
+	 * Init cache for every thread
+	 */
+	for (i = 0; i < CORES; ++i) {
+
+		arguments_1[i].cache_tid = &cache_tid[i];
+		arguments_1[i]._bufout = &_bufout[i];
+		arguments_1[i]._bufoutlen = &_bufoutlen[i];
+		
+		if ( pthread_create(&threads[i], NULL, init_cache_for_threads, (void *)&arguments_1[i]) ) {
+	         fprintf(stderr, "Error creating threads\n");
+	         return -1;
+	    }
+	}
+
+	for (i = 0; i < CORES; ++i) {
+		if ( pthread_join(threads[i], NULL) ) {
+	          fprintf(stderr, "Error joining threads\n");
+	          return -1;
+	    }
+	}	
 
 	/* Get the frequency of each symbol in the input memory. */
 	symbol_count = get_symbol_frequencies_from_memory(&sf, bufin, bufinlen);
@@ -990,17 +818,58 @@ int huffman_encode_memory(const unsigned char *bufin,
 	/* Scan the memory again and, using the table
 	   previously built, encode it into the output memory. */
 	rc = write_code_table_to_memory(&cache, se, symbol_count);
-	if(rc == 0)
-		rc = do_memory_encode(&cache, bufin, bufinlen, se);
-
-	/* Flush the cache. */
 	flush_cache(&cache);
+	if(rc == 0) {
+		//#pragma omp parallel for num_threads(CORES)
+		for (i = 0; i < CORES; ++i) {
+
+			arguments_2[i].cache_tid = arguments_1[i].cache_tid;
+			arguments_2[i].bufin = &bufin;
+			arguments_2[i].bufinlen = &bufinlen;
+			arguments_2[i].se = &se;
+			arguments_2[i].pos = i;
+
+			if ( pthread_create(&threads[i], NULL, do_memory_encode_threads, (void *)&arguments_2[i]) ) {
+		         fprintf(stderr, "Error creating threads\n");
+		         return -1;
+		    }
+		}
+
+		for (i = 0; i < CORES; ++i) {
+			if ( pthread_join(threads[i], NULL) ) {
+	          fprintf(stderr, "Error joining threads\n");
+	          return -1;
+	    	}
+		}
+
+			for (i = 0; i < CORES; ++i)
+			{
+				remains[i] = arguments_2[i].remains;
+			}
+	}
+
+	unsigned int tmp_size = *pbufoutlen;
+
+	for (i = 0; i < CORES; ++i) {
+		tmp_size += _bufoutlen[i];
+	}
+	
+	unsigned char *tmp = realloc(*pbufout, tmp_size * sizeof(char));
+
+	unsigned char *aux;
+
+	unsigned int res = merge_buffers(&aux, _bufout, _bufoutlen, remains);
+
+	memcpy(tmp + *pbufoutlen, aux, res);
+
+	*pbufout = tmp;
+	*pbufoutlen += res;
 	
 	/* Free the Huffman tree. */
 	free_huffman_tree(root);
 	free_encoder(se);
 	free_cache(&cache);
-	return rc;
+	return 0;
 }
 
 int huffman_decode_memory(const unsigned char *bufin,
@@ -1015,13 +884,15 @@ int huffman_decode_memory(const unsigned char *bufin,
 	unsigned int bufcur = 0;
 
 	/* Ensure the arguments are valid. */
-	if(!pbufout || !pbufoutlen)
+	if(!pbufout || !pbufoutlen) {
 		return 1;
+	}
 
 	/* Read the Huffman code table. */
 	root = read_code_table_from_memory(bufin, bufinlen, &i, &data_count);
-	if(!root)
+	if(!root) {
 		return 1;
+	}
 
 	buf = (unsigned char*)malloc(data_count);
 
