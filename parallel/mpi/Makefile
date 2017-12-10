@@ -3,14 +3,17 @@
 # or
 # make ARCH=x86_64
 
-CFLAGS=-g -Wall -Werror
+CFLAGS=-g 
 
 ifdef ARCH
 LDFLAGS+=-arch ${ARCH}
 CFLAGS+=-arch ${ARCH}
 endif
 
-all: huffcode libhuffman.a
+all: mpi
+
+mpi:
+	mpicc huffman.c huffcode.c $(CFLAGS) -o huffcode
 
 huffcode: huffcode.o libhuffman.a
 	$(CC) $(LDFLAGS) -o $@ huffcode.o libhuffman.a
