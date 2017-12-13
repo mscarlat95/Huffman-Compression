@@ -9,13 +9,15 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <mpi.h>
 
 int huffman_encode_file(FILE *in, FILE *out);
 int huffman_decode_file(FILE *in, FILE *out);
 int huffman_encode_memory(const unsigned char *bufin,
 						  uint32_t bufinlen,
 						  unsigned char **pbufout,
-						  uint32_t *pbufoutlen);
+						  uint32_t *pbufoutlen,
+						  MPI_Comm communicator);
 int huffman_decode_memory(const unsigned char *bufin,
 						  uint32_t bufinlen,
 						  unsigned char **bufout,

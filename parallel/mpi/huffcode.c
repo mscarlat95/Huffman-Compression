@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <mpi.h>
 
 #ifdef WIN32
 #include <malloc.h>
@@ -19,8 +20,12 @@ extern char* optarg;
 #include <unistd.h>
 #endif
 
-static int memory_encode_file(FILE *in, FILE *out);
-static int memory_decode_file(FILE *in, FILE *out);
+#define THREADS 4
+
+static unsigned int memory_encode_read_file(FILE *in,
+									   unsigned char **buf, unsigned long sz);
+static unsigned int memory_decode_read_file(FILE *in,
+									   unsigned char **buf, unsigned long sz);
 
 static void
 version(FILE *out)
@@ -46,11 +51,25 @@ usage(FILE* out)
 int
 main(int argc, char** argv)
 {
-	char memory = 0;
+	unsigned char *buf = NULL;
+	char memory = 1;
 	char compress = 1;
 	int opt;
+	unsigned int i, j, cur;
 	const char *file_in = NULL, *file_out = NULL;
-	FILE *in = stdin;
+	
+	unsigned char* bufout = NULL;
+	unsigned int bufoutlen = 0;
+	
+	int rank = -1, nTasks = -1;
+
+	/* Initialize MPI execution environment */
+	MPI_Init (&argc, &argv);
+	/* Determines the rank/ID of the current task */
+	MPI_Comm_rank (MPI_COMM_WORLD, &rank);
+	/* Gives the number of tasks */
+	MPI_Comm_size (MPI_COMM_WORLD, &nTasks);
+
 	FILE *out = stdout;
 
 	/* Get the command line arguments. */
@@ -76,26 +95,27 @@ main(int argc, char** argv)
 		case 'v':
 			version(stdout);
 			return 0;
-		case 'm':
-			memory = 1;
-			break;
 		default:
 			usage(stderr);
 			return 1;
 		}
 	}
 
-	/* If an input file is given then open it. */
+	FILE *fp;
+
+	/* If an input file is given then open it
+	 * on several positions
+	 */
 	if(file_in)
 	{
-		in = fopen(file_in, "rb");
-		if(!in)
-		{
-			fprintf(stderr,
-					"Can't open input file '%s': %s\n",
-					file_in, strerror(errno));
-			return 1;
-		}
+			fp = fopen(file_in, "rb");
+			if(!fp)
+			{
+				fprintf(stderr,
+						"Can't open input file '%s': %s\n",
+						file_in, strerror(errno));
+				exit(1);
+			}
 	}
 
 	/* If an output file is given then create it. */
@@ -111,109 +131,211 @@ main(int argc, char** argv)
 		}
 	}
 
+	/**
+	 * Get file size
+	 */
+	unsigned long sz = 0;
+	int to_read[nTasks];
+	int displs[nTasks];
+
+	if (rank == 0) {
+		fseek(fp, 0L, SEEK_END);
+		sz = (unsigned long)ftell(fp);
+		fseek(fp, 0L, SEEK_SET);
+	}
+
+	/**
+	 * Sending the size to read
+	 */
+	MPI_Bcast (&sz, 1, MPI_UNSIGNED_LONG, 0, MPI_COMM_WORLD);
+
+	for (i = 0; i < nTasks; ++i) {
+		if (i == nTasks - 1) {
+			to_read[nTasks - 1] = sz - (nTasks - 1) * (sz / nTasks);
+		} else {
+			to_read[i] = sz / nTasks;
+		}
+		
+		displs[i] = 0;
+
+		for (j = 0; j < i; ++j) {
+			displs[i] += to_read[j];
+		}
+	}
+	
+	/**
+	 * Increment each file pointer to its specific chunk size
+	 */
+	fseek(fp, rank * (unsigned long) (sz / nTasks), SEEK_SET);			
+	
 	if(memory)
 	{
-		return compress ?
-			memory_encode_file(in, out) : memory_decode_file(in, out);
-	}
+		if (compress) {
 
-	return compress ?
-		huffman_encode_file(in, out) : huffman_decode_file(in, out);
+			cur = memory_encode_read_file(fp, &buf, to_read[rank]);
+			printf("rank: %d, to_read: %d\n", rank, to_read[rank]);
+			/**
+			 * Copy the contents of all 
+			 * partial buffers into one
+			 */
+
+			char *text;
+
+			text = malloc(sz * sizeof(char));					
+
+			MPI_Gatherv(buf, to_read[rank], MPI_CHAR, text, to_read, displs, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+			MPI_Bcast (text, sz, MPI_CHAR, 0, MPI_COMM_WORLD);
+
+			/**
+			 * Do actual huffman algorithm
+			 * TODO - add 1 thread to write to memory the table
+			 *		- add 4 threads to write to memory their segments of content
+			 */
+			
+			if(huffman_encode_memory(text, sz, &bufout, &bufoutlen, MPI_COMM_WORLD))
+			{
+				free(text);
+				return 1;
+			}
+
+			// free(scarlat);
+
+			if (rank == 0) {
+				// Write the memory to the file. 
+				if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
+				{
+					free(bufout);
+					return 1;
+				}
+
+				free(bufout);
+			}
+		}
+		else {
+			// int a, pos = 0;
+			// unsigned long size = sz / THREADS;
+
+			// #pragma omp parallel for schedule(dynamic) \
+			// num_threads(THREADS)
+			// for(i = 0; i < THREADS; ++i) {
+			// 	if (i == THREADS - 1) {
+			// 		size = sz - (THREADS - 1) * size;
+			// 	}
+			// 	cur[i] = memory_decode_read_file(fp[i], &buf[i], size);
+			// }
+
+			// unsigned int sum = 0;
+			// for(i = 0; i < THREADS; i++) {
+			// 	sum += cur[i];
+			// }
+
+			// char *scarlat = malloc(sum * sizeof(char));
+
+			// for (i = 0; i <	THREADS; ++i) {
+			// 	memcpy(scarlat + pos, buf[i], cur[i]);
+			// 	pos += cur[i];
+			// }
+
+			// // for (i = 0; i < THREADS; i++) {
+			// // 	free(buf[i]);
+			// // 	buf[i] = NULL;
+			// // }
+
+			// /* Decode the memory. */
+			// if(huffman_decode_memory(scarlat, sum, &bufout, &bufoutlen))
+			// {
+			// 	free(scarlat);
+			// 	return 1;
+			// }
+
+			// free(scarlat);
+
+			// // Write the memory to the file. 
+			// if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
+			// {
+			// 	free(bufout);
+			// 	return 1;
+			// }
+
+			// free(bufout);
+		}
+
+		MPI_Finalize();
+
+		return 0;
+	}
 }
 
-static int
-memory_encode_file(FILE *in, FILE *out)
+static unsigned int
+memory_encode_read_file(FILE *in,
+				   unsigned char **buf, unsigned long sz)
 {
-	unsigned char *buf = NULL, *bufout = NULL;
-	unsigned int len = 0, cur = 0, inc = 1024, bufoutlen = 0;
+	unsigned int i, len = 0, cur = 0, inc = 1024;
 
-	assert(in && out);
+	assert(in);
 
 	/* Read the file into memory. */
-	while(!feof(in))
+	for(i = 0; i < (unsigned int)sz; i += inc)
+	{
+		//printf("%d\n", omp_get_thread_num());
+		unsigned char *tmp;
+		len += inc;
+		tmp = (unsigned char*)realloc(*buf, len);
+		if(!tmp)
+		{
+			if(*buf)
+				free(buf);
+			return -1;
+		}
+
+		*buf = tmp;
+		if(cur + inc > sz) {
+			cur += fread(*buf + cur, 1, (unsigned int)(sz - cur), in);
+		} 
+		else {
+			cur += fread(*buf + cur, 1, inc, in);
+		}
+	}
+
+	if(NULL != *buf) {
+		return cur;
+	}
+	return -1;
+}
+
+static unsigned int
+memory_decode_read_file(FILE *in,
+				   unsigned char **buf, unsigned long sz)
+{
+	unsigned int i, len = 0, cur = 0, inc = 1024;
+	assert(in);
+
+	/* Read the file into memory. */
+	for (i = 0; i < (unsigned int)sz; i+=inc)
 	{
 		unsigned char *tmp;
 		len += inc;
-		tmp = (unsigned char*)realloc(buf, len);
+		tmp = (unsigned char*)realloc(*buf, len);
 		if(!tmp)
 		{
-			if(buf)
-				free(buf);
+			if(*buf) {
+				free(*buf);
+			}
 			return 1;
 		}
 
-		buf = tmp;
-		cur += fread(buf + cur, 1, inc, in);
-	}
-
-	if(!buf)
-		return 1;
-
-	/* Encode the memory. */
-	if(huffman_encode_memory(buf, cur, &bufout, &bufoutlen))
-	{
-		free(buf);
-		return 1;
-	}
-
-	free(buf);
-
-	/* Write the memory to the file. */
-	if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
-	{
-		free(bufout);
-		return 1;
-	}
-
-	free(bufout);
-
-	return 0;
-}
-
-static int
-memory_decode_file(FILE *in, FILE *out)
-{
-	unsigned char *buf = NULL, *bufout = NULL;
-	unsigned int len = 0, cur = 0, inc = 1024, bufoutlen = 0;
-	assert(in && out);
-
-	/* Read the file into memory. */
-	while(!feof(in))
-	{
-		unsigned char *tmp;
-		len += inc;
-		tmp = (unsigned char*)realloc(buf, len);
-		if(!tmp)
-		{
-			if(buf)
-				free(buf);
-			return 1;
+		*buf = tmp;
+		if(cur + inc > sz) {
+			cur += fread(*buf + cur, 1, (unsigned int)(sz - cur), in);
+		} 
+		else {
+			cur += fread(*buf + cur, 1, inc, in);
 		}
-
-		buf = tmp;
-		cur += fread(buf + cur, 1, inc, in);
 	}
 
-	if(!buf)
-		return 1;
-
-	/* Decode the memory. */
-	if(huffman_decode_memory(buf, cur, &bufout, &bufoutlen))
-	{
-		free(buf);
-		return 1;
+	if(NULL != *buf) {
+		return cur;
 	}
-
-	free(buf);
-
-	/* Write the memory to the file. */
-	if(fwrite(bufout, 1, bufoutlen, out) != bufoutlen)
-	{
-		free(bufout);
-		return 1;
-	}
-
-	free(bufout);
-
-	return 0;
+	return -1;
 }
