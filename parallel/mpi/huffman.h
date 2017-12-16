@@ -17,6 +17,8 @@ int huffman_encode_memory(const unsigned char *bufin,
 						  uint32_t bufinlen,
 						  unsigned char **pbufout,
 						  uint32_t *pbufoutlen,
+						  int rank,
+						  int nTasks,
 						  MPI_Comm communicator);
 int huffman_decode_memory(const unsigned char *bufin,
 						  uint32_t bufinlen,

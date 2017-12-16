@@ -173,7 +173,7 @@ main(int argc, char** argv)
 		if (compress) {
 
 			cur = memory_encode_read_file(fp, &buf, to_read[rank]);
-			printf("rank: %d, to_read: %d\n", rank, to_read[rank]);
+			// printf("rank: %d, to_read: %d\n", rank, to_read[rank]);
 			/**
 			 * Copy the contents of all 
 			 * partial buffers into one
@@ -193,7 +193,7 @@ main(int argc, char** argv)
 			 *		- add 4 threads to write to memory their segments of content
 			 */
 			
-			if(huffman_encode_memory(text, sz, &bufout, &bufoutlen, MPI_COMM_WORLD))
+			if(huffman_encode_memory(text, sz, &bufout, &bufoutlen, rank, nTasks, MPI_COMM_WORLD))
 			{
 				free(text);
 				return 1;

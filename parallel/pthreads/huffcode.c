@@ -110,7 +110,7 @@ usage(FILE* out)
 int
 main(int argc, char** argv)
 {
-	unsigned char *buf[THREADS] = {NULL, NULL, NULL, NULL};
+	unsigned char *buf[THREADS];
 	char memory = 1;
 	char compress = 1;
 	int opt;
@@ -119,6 +119,9 @@ main(int argc, char** argv)
 	
 	unsigned char* bufout = NULL;
 	unsigned int bufoutlen = 0;
+
+	for (i = 0; i < THREADS; ++i)
+		buf[i] = NULL;
 
 	struct open_files arguments_1[THREADS];
 	struct fseek_files arguments_2[THREADS];

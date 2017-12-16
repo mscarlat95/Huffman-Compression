@@ -18,8 +18,6 @@
 #include <netinet/in.h>
 #endif
 
-#define CORES 4
-
 typedef struct huffman_node_tag
 {
 	unsigned char isLeaf;
@@ -728,15 +726,17 @@ int huffman_encode_memory(const unsigned char *bufin,
 						  unsigned int bufinlen,
 						  unsigned char **pbufout,
 						  unsigned int *pbufoutlen,
+						  int rank,
+						  int nTasks,
 						  MPI_Comm communicator)
 {
 
-	int rank = -1;
-	int nTasks = -1;
+	//int rank = -1;
+	//int nTasks = -1;
 
-	MPI_Comm_rank (communicator, &rank);
-	/* Gives the number of tasks */
-	MPI_Comm_size (communicator, &nTasks);
+	// MPI_Comm_rank (communicator, &rank);
+	//  Gives the number of tasks 
+	// MPI_Comm_size (communicator, &nTasks);
 
 	SymbolFrequencies sf;
 	SymbolEncoder *se;
@@ -769,9 +769,9 @@ int huffman_encode_memory(const unsigned char *bufin,
 	/**
 	 * Init cache for every MPI process
 	 */
-	// _bufout_local = NULL;
-	// _bufoutlen_local = 0;
-	// init_cache(&cache_proc, CACHE_SIZE, &_bufout_local, &_bufoutlen_local);
+	_bufout_local = NULL;
+	_bufoutlen_local = 0;
+	init_cache(&cache_proc, CACHE_SIZE, &_bufout_local, &_bufoutlen_local);
 
 	/* Get the frequency of each symbol in the input memory. */
 	symbol_count = get_symbol_frequencies_from_memory(&sf, bufin, bufinlen);
@@ -784,94 +784,104 @@ int huffman_encode_memory(const unsigned char *bufin,
 	if (rank == 0) {
 		/* Scan the memory again and, using the table
 		   previously built, encode it into the output memory. */
-		rc = write_code_table_to_memory(&cache, se, symbol_count);
+		write_code_table_to_memory(&cache, se, symbol_count);
 		flush_cache(&cache);
 	}
 
-	if(rc == 0) {
-		remains_local = do_memory_encode(&cache_proc, bufin + (rank * bufinlen / nTasks), bufinlen / nTasks, se);
-		flush_cache(&cache_proc);
+	remains_local = do_memory_encode(&cache_proc, bufin + (rank * bufinlen / nTasks), bufinlen / nTasks, se);
+	flush_cache(&cache_proc);
+
+	if (rank != 0) {		
+		MPI_Send(
+	    		&_bufoutlen_local,
+	    		1,
+	    		MPI_UNSIGNED,
+	    		0,
+	    		13,
+	    		communicator);
+
+		MPI_Send(
+	    		_bufout_local,
+	    		_bufoutlen_local,
+	    		MPI_CHAR,
+	    		0,
+	    		14,
+	    		communicator);
+
+		MPI_Send(
+	    		&remains_local,
+	    		1,
+	    		MPI_UNSIGNED,
+	    		0,
+	    		15,
+	    		communicator);
 	}
 
-	// MPI_Send(
- //    		&_bufoutlen_local,
- //    		1,
- //    		MPI_UNSIGNED,
- //    		0,
- //    		13,
- //    		communicator);
-
-	// MPI_Send(
- //    		_bufout_local,
- //    		_bufoutlen_local,
- //    		MPI_CHAR,
- //    		0,
- //    		14,
- //    		communicator);
-
-	// MPI_Send(
- //    		&remains_local,
- //    		1,
- //    		MPI_UNSIGNED,
- //    		0,
- //    		15,
- //    		communicator);
-
-	// if (rank == 0) {
+	if (rank == 0) {
 		
-	// 	unsigned int tmp_size = *pbufoutlen;
+		unsigned int tmp_size = *pbufoutlen;
 
-	// 	for (i = 0; i < nTasks; ++i) {
-	// 		MPI_Recv(
- //    			&_bufoutlen_root[i],
- //    			1,
-	// 		    MPI_UNSIGNED,
-	// 		    i,
-	// 		    13,
-	// 		    communicator,
-	// 		    &status);
-
-	// 		_bufout_root[i] = malloc(_bufoutlen_root[i] * sizeof(char));
-
-	// 		MPI_Recv(
-	// 			_bufout_root[i],
- //    			_bufoutlen_root[i],
-	// 		    MPI_CHAR,
-	// 		    i,
-	// 		    14,
-	// 		    communicator,
-	// 		    &status);
-
-	// 		MPI_Recv(
- //    			&remains_root[i],
- //    			1,
-	// 		    MPI_UNSIGNED,
-	// 		    i,
-	// 		    15,
-	// 		    communicator,
-	// 		    &status);
-
-	// 		tmp_size += _bufoutlen_root[i];
-	// 		printf(" rank: %d _bufoutlen_root = %d\n",rank,  _bufoutlen_root[i]);
-	// 	}
-	// 	// unsigned char *tmp = calloc (tmp_size, sizeof(char));
-	// 	// memcpy (tmp, *pbufout, sizeof(*pbufout));
+		_bufoutlen_root[0] = _bufoutlen_local;
+		_bufout_root[0] = malloc(_bufoutlen_root[0] * sizeof(char));
 		
-	// 	unsigned char *tmp = realloc(*pbufout, tmp_size * sizeof(char));
+		memcpy(_bufout_root[0], _bufout_local, _bufoutlen_root[0]);
+		
+		remains_root[0] = remains_local;
 
-	// 	unsigned char *aux = NULL;
-	// 	unsigned int res = merge_buffers(&aux, _bufout_root, _bufoutlen_root, remains_root, nTasks);
+		for (i = 1; i < nTasks; ++i) {
+			
+			MPI_Recv(
+    			&_bufoutlen_root[i],
+    			1,
+			    MPI_UNSIGNED,
+			    i,
+			    13,
+			    communicator,
+			    &status);
 
-	// 	memcpy(tmp + *pbufoutlen, aux, res);
+			_bufout_root[i] = malloc(_bufoutlen_root[i] * sizeof(char));
 
-	// 	*pbufout = tmp;
-	// 	*pbufoutlen += res;
-	// }
+			MPI_Recv(
+				_bufout_root[i],
+    			_bufoutlen_root[i],
+			    MPI_CHAR,
+			    i,
+			    14,
+			    communicator,
+			    &status);
+
+			MPI_Recv(
+    			&remains_root[i],
+    			1,
+			    MPI_UNSIGNED,
+			    i,
+			    15,
+			    communicator,
+			    &status);
+
+			tmp_size += _bufoutlen_root[i];
+		}
+
+		// unsigned char *tmp = calloc (tmp_size, sizeof(char));
+		// memcpy (tmp, *pbufout, sizeof(*pbufout));
+		
+		unsigned char *tmp = realloc(*pbufout, tmp_size * sizeof(char));
+
+		unsigned char *aux = NULL;
+		unsigned int res = merge_buffers(&aux, _bufout_root, _bufoutlen_root, remains_root, nTasks);
+
+		memcpy(tmp + *pbufoutlen, aux, res);
+
+		*pbufout = tmp;
+		*pbufoutlen += res;
+
+		free_cache(&cache);
+	}
 	
 	/* Free the Huffman tree. */
 	free_huffman_tree(root);
 	free_encoder(se);
-	//free_cache(&cache);
+	free_cache(&cache_proc);
 	return 0;
 }
 

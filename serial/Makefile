@@ -14,7 +14,7 @@ endif
 all: omp
 
 omp:
-	gcc huffman.c huffcode.c $(CFLAGS) -o huffcode -fopenmp
+	gcc huffman.c huffcode.c $(CFLAGS) -o huffcode
 
 huffcode: huffcode.o libhuffman.a
 	$(CC) $(LDFLAGS) -o $@ huffcode.o libhuffman.a
